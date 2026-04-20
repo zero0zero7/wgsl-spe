@@ -1,0 +1,358 @@
+TranslationUnit
+├── Struct("Uniforms")
+│   └── StructMember("values")
+│       └── NamedType("vec4i")
+├── GlobalVariable("ub")
+│   ├── Attr:group
+│   │   └── IntLiteral(0)
+│   ├── Attr:binding
+│   │   └── IntLiteral(0)
+│   └── NamedType("Uniforms")
+├── Struct("BST")
+│   ├── StructMember("data")
+│   │   └── ScalarType(i32)
+│   ├── StructMember("leftIndex")
+│   │   └── ScalarType(i32)
+│   └── StructMember("rightIndex")
+│       └── ScalarType(i32)
+├── GlobalVariable("tree")
+│   └── Array
+│       ├── NamedType("BST")
+│       └── IntLiteral(10)
+├── Function("makeTreeNode")
+│   ├── Param("index")
+│   │   └── ScalarType(i32)
+│   ├── Param("data")
+│   │   └── ScalarType(i32)
+│   └── Compound
+│       ├── Assignment
+│       │   ├── LhsMemberLookup(.data)
+│       │   │   └── LhsIndexLookup
+│       │   │       ├── LhsIdentifier("tree")
+│       │   │       └── Identifier("index")
+│       │   └── Identifier("data")
+│       ├── Assignment
+│       │   ├── LhsMemberLookup(.leftIndex)
+│       │   │   └── LhsIndexLookup
+│       │   │       ├── LhsIdentifier("tree")
+│       │   │       └── Identifier("index")
+│       │   └── Unary(MINUS)
+│       │       └── IntLiteral(1)
+│       └── Assignment
+│           ├── LhsMemberLookup(.rightIndex)
+│           │   └── LhsIndexLookup
+│           │       ├── LhsIdentifier("tree")
+│           │       └── Identifier("index")
+│           └── Unary(MINUS)
+│               └── IntLiteral(1)
+├── Function("insert")
+│   ├── Param("treeIndex")
+│   │   └── ScalarType(i32)
+│   ├── Param("data")
+│   │   └── ScalarType(i32)
+│   └── Compound
+│       ├── Variable("baseIndex")
+│       │   ├── ScalarType(i32)
+│       │   └── IntLiteral(0)
+│       └── While
+│           ├── Paren
+│           │   └── Binary(LESS_THAN_EQUAL)
+│           │       ├── Identifier("baseIndex")
+│           │       └── Identifier("treeIndex")
+│           └── Compound
+│               └── If
+│                   ├── Paren
+│                   │   └── Binary(LESS_THAN_EQUAL)
+│                   │       ├── Identifier("data")
+│                   │       └── MemberLookup(.data)
+│                   │           └── IndexLookup
+│                   │               ├── Identifier("tree")
+│                   │               └── Identifier("baseIndex")
+│                   ├── Compound
+│                   │   └── If
+│                   │       ├── Paren
+│                   │       │   └── Binary(EQUAL_EQUAL)
+│                   │       │       ├── MemberLookup(.leftIndex)
+│                   │       │       │   └── IndexLookup
+│                   │       │       │       ├── Identifier("tree")
+│                   │       │       │       └── Identifier("baseIndex")
+│                   │       │       └── Unary(MINUS)
+│                   │       │           └── IntLiteral(1)
+│                   │       ├── Compound
+│                   │       │   ├── Assignment
+│                   │       │   │   ├── LhsMemberLookup(.leftIndex)
+│                   │       │   │   │   └── LhsIndexLookup
+│                   │       │   │   │       ├── LhsIdentifier("tree")
+│                   │       │   │   │       └── Identifier("baseIndex")
+│                   │       │   │   └── Identifier("treeIndex")
+│                   │       │   ├── StatementFunctionCall("makeTreeNode")
+│                   │       │   │   ├── Identifier("treeIndex")
+│                   │       │   │   └── Identifier("data")
+│                   │       │   └── Return
+│                   │       └── Compound
+│                   │           ├── Assignment
+│                   │           │   ├── LhsIdentifier("baseIndex")
+│                   │           │   └── MemberLookup(.leftIndex)
+│                   │           │       └── IndexLookup
+│                   │           │           ├── Identifier("tree")
+│                   │           │           └── Identifier("baseIndex")
+│                   │           └── Continue
+│                   └── Compound
+│                       └── If
+│                           ├── Paren
+│                           │   └── Binary(EQUAL_EQUAL)
+│                           │       ├── MemberLookup(.rightIndex)
+│                           │       │   └── IndexLookup
+│                           │       │       ├── Identifier("tree")
+│                           │       │       └── Identifier("baseIndex")
+│                           │       └── Unary(MINUS)
+│                           │           └── IntLiteral(1)
+│                           ├── Compound
+│                           │   ├── Assignment
+│                           │   │   ├── LhsMemberLookup(.rightIndex)
+│                           │   │   │   └── LhsIndexLookup
+│                           │   │   │       ├── LhsIdentifier("tree")
+│                           │   │   │       └── Identifier("baseIndex")
+│                           │   │   └── Identifier("treeIndex")
+│                           │   ├── StatementFunctionCall("makeTreeNode")
+│                           │   │   ├── Identifier("treeIndex")
+│                           │   │   └── Identifier("data")
+│                           │   └── Return
+│                           └── Compound
+│                               ├── Assignment
+│                               │   ├── LhsIdentifier("baseIndex")
+│                               │   └── MemberLookup(.rightIndex)
+│                               │       └── IndexLookup
+│                               │           ├── Identifier("tree")
+│                               │           └── Identifier("baseIndex")
+│                               └── Continue
+├── Function("search")
+│   ├── Param("targetElement")
+│   │   └── ScalarType(i32)
+│   ├── ScalarType(i32)
+│   └── Compound
+│       ├── Variable("currentNode")
+│       │   └── NamedType("BST")
+│       ├── Variable("index")
+│       │   ├── ScalarType(i32)
+│       │   └── IntLiteral(0)
+│       ├── While
+│       │   ├── Paren
+│       │   │   └── Binary(NOT_EQUAL)
+│       │   │       ├── Identifier("index")
+│       │   │       └── Unary(MINUS)
+│       │   │           └── IntLiteral(1)
+│       │   └── Compound
+│       │       ├── Assignment
+│       │       │   ├── LhsIdentifier("currentNode")
+│       │       │   └── IndexLookup
+│       │       │       ├── Identifier("tree")
+│       │       │       └── Identifier("index")
+│       │       ├── If
+│       │       │   ├── Paren
+│       │       │   │   └── Binary(EQUAL_EQUAL)
+│       │       │   │       ├── MemberLookup(.data)
+│       │       │   │       │   └── Identifier("currentNode")
+│       │       │   │       └── Identifier("targetElement")
+│       │       │   └── Compound
+│       │       │       └── Return
+│       │       │           └── Identifier("targetElement")
+│       │       └── If
+│       │           ├── Paren
+│       │           │   └── Binary(GREATER_THAN)
+│       │           │       ├── Identifier("targetElement")
+│       │           │       └── MemberLookup(.data)
+│       │           │           └── Identifier("currentNode")
+│       │           ├── Compound
+│       │           │   └── Assignment
+│       │           │       ├── LhsIdentifier("index")
+│       │           │       └── MemberLookup(.rightIndex)
+│       │           │           └── Identifier("currentNode")
+│       │           └── Compound
+│       │               └── Assignment
+│       │                   ├── LhsIdentifier("index")
+│       │                   └── MemberLookup(.leftIndex)
+│       │                       └── Identifier("currentNode")
+│       └── Return
+│           └── Unary(MINUS)
+│               └── IntLiteral(1)
+├── Function("contains")
+│   ├── Param("x")
+│   │   └── ScalarType(i32)
+│   ├── ScalarType(bool)
+│   └── Compound
+│       └── Return
+│           └── Binary(SHORT_CIRCUIT_OR)
+│               ├── Binary(SHORT_CIRCUIT_OR)
+│               │   ├── Binary(SHORT_CIRCUIT_OR)
+│               │   │   ├── Binary(EQUAL_EQUAL)
+│               │   │   │   ├── MemberLookup(.x)
+│               │   │   │   │   └── MemberLookup(.values)
+│               │   │   │   │       └── Identifier("ub")
+│               │   │   │   └── Identifier("x")
+│               │   │   └── Binary(EQUAL_EQUAL)
+│               │   │       ├── MemberLookup(.y)
+│               │   │       │   └── MemberLookup(.values)
+│               │   │       │       └── Identifier("ub")
+│               │   │       └── Identifier("x")
+│               │   └── Binary(EQUAL_EQUAL)
+│               │       ├── MemberLookup(.z)
+│               │       │   └── MemberLookup(.values)
+│               │       │       └── Identifier("ub")
+│               │       └── Identifier("x")
+│               └── Binary(EQUAL_EQUAL)
+│                   ├── MemberLookup(.w)
+│                   │   └── MemberLookup(.values)
+│                   │       └── Identifier("ub")
+│                   └── Identifier("x")
+├── Function("vertexMain")
+│   ├── Attr:vertex
+│   ├── Param("pos")
+│   │   ├── Attr:location
+│   │   │   └── IntLiteral(0)
+│   │   └── NamedType("vec2f")
+│   ├── Attr:builtin(POSITION)
+│   ├── NamedType("vec4f")
+│   └── Compound
+│       └── Return
+│           └── FunctionCall("vec4f")
+│               ├── Identifier("pos")
+│               ├── IntLiteral(0)
+│               └── IntLiteral(1)
+└── Function("fragmentMain")
+    ├── Attr:fragment
+    ├── Attr:location
+    │   └── IntLiteral(0)
+    ├── NamedType("vec4f")
+    └── Compound
+        ├── Variable("treeIndex")
+        │   ├── ScalarType(i32)
+        │   └── IntLiteral(0)
+        ├── StatementFunctionCall("makeTreeNode")
+        │   ├── IntLiteral(0)
+        │   └── IntLiteral(9)
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── IntLiteral(5)
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── IntLiteral(12)
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── MemberLookup(.x)
+        │       └── MemberLookup(.values)
+        │           └── Identifier("ub")
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── MemberLookup(.y)
+        │       └── MemberLookup(.values)
+        │           └── Identifier("ub")
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── MemberLookup(.z)
+        │       └── MemberLookup(.values)
+        │           └── Identifier("ub")
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── MemberLookup(.w)
+        │       └── MemberLookup(.values)
+        │           └── Identifier("ub")
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── IntLiteral(15)
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── StatementFunctionCall("insert")
+        │   ├── Identifier("treeIndex")
+        │   └── IntLiteral(7)
+        ├── Increment
+        │   └── LhsIdentifier("treeIndex")
+        ├── Variable("count")
+        │   ├── ScalarType(i32)
+        │   └── IntLiteral(0)
+        ├── For
+        │   ├── Variable("i")
+        │   │   └── IntLiteral(0)
+        │   ├── Binary(LESS_THAN)
+        │   │   ├── Identifier("i")
+        │   │   └── IntLiteral(20)
+        │   ├── Increment
+        │   │   └── LhsIdentifier("i")
+        │   └── Compound
+        │       ├── Value("result")
+        │       │   └── FunctionCall("search")
+        │       │       └── Identifier("i")
+        │       └── Switch
+        │           ├── Paren
+        │           │   └── Identifier("i")
+        │           ├── SwitchClause
+        │           │   ├── IntLiteral(9)
+        │           │   ├── IntLiteral(5)
+        │           │   ├── IntLiteral(12)
+        │           │   ├── IntLiteral(15)
+        │           │   ├── IntLiteral(7)
+        │           │   └── Compound
+        │           │       └── If
+        │           │           ├── Paren
+        │           │           │   └── Binary(EQUAL_EQUAL)
+        │           │           │       ├── Identifier("result")
+        │           │           │       └── Identifier("i")
+        │           │           └── Compound
+        │           │               └── Increment
+        │           │                   └── LhsIdentifier("count")
+        │           └── SwitchClause
+        │               └── Compound
+        │                   └── If
+        │                       ├── Paren
+        │                       │   └── Binary(SHORT_CIRCUIT_OR)
+        │                       │       ├── Paren
+        │                       │       │   └── Binary(SHORT_CIRCUIT_AND)
+        │                       │       │       ├── Binary(EQUAL_EQUAL)
+        │                       │       │       │   ├── Identifier("result")
+        │                       │       │       │   └── Unary(MINUS)
+        │                       │       │       │       └── IntLiteral(1)
+        │                       │       │       └── Unary(LOGICAL_NOT)
+        │                       │       │           └── FunctionCall("contains")
+        │                       │       │               └── Identifier("i")
+        │                       │       └── Paren
+        │                       │           └── Binary(SHORT_CIRCUIT_AND)
+        │                       │               ├── FunctionCall("contains")
+        │                       │               │   └── Identifier("i")
+        │                       │               └── Binary(EQUAL_EQUAL)
+        │                       │                   ├── Identifier("result")
+        │                       │                   └── Identifier("i")
+        │                       └── Compound
+        │                           └── Increment
+        │                               └── LhsIdentifier("count")
+        ├── If
+        │   ├── Paren
+        │   │   └── Binary(EQUAL_EQUAL)
+        │   │       ├── Identifier("count")
+        │   │       └── IntLiteral(20)
+        │   └── Compound
+        │       └── Return
+        │           └── ValueConstructor(vec4)
+        │               ├── IntLiteral(1)
+        │               ├── IntLiteral(0)
+        │               ├── IntLiteral(0)
+        │               └── IntLiteral(1)
+        └── Return
+            └── ValueConstructor(vec4)
+                ├── IntLiteral(0)
+                ├── IntLiteral(0)
+                ├── IntLiteral(1)
+                └── IntLiteral(1)
