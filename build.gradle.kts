@@ -143,4 +143,5 @@ tasks.register<JavaExec>("dumpAst") {
 tasks.register<JavaExec>("printSkeletalPrograms") {
     mainClass.set("com.wgslfuzz.tools.PrintSkeletalProgramsKt")
     classpath = sourceSets["main"].runtimeClasspath
+    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005")
 }

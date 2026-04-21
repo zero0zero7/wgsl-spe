@@ -20,7 +20,7 @@ package com.wgslfuzz.core
  * Returns a zero-value placeholder Expression for [type], or null if the type
  * cannot be represented as a simple value constructor (e.g. pointers, atomics, textures).
  *
- * Abstract types (AbstractInteger, AbstractFloat) are treated as their concrete
+ * Abstract types (AbstractInteger, AbstractFloat -- no fixed bit-width) are treated as their concrete
  * defaults (I32, F32) so the returned expression is always well-typed.
  */
 fun placeholderFor(type: Type): Expression? =
