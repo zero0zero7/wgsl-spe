@@ -155,6 +155,7 @@ sealed interface ResolvedEnvironment {
  * | let z: f32 = 0;      |    level 0: z: f32                                                                         |
  * +----------------------+--------------------------------------------------------------------------------------------+
  */
+// Linked-list data structure
 private class ScopeImpl(
     private val previous: ScopeImpl? = null,
     // Levels corresponds to the lexical scope of the scopeEntry
@@ -163,7 +164,7 @@ private class ScopeImpl(
     private val level: Int = 0,
     // scopeEntry is nullable as we need a way of describing an empty scope at a particular level. Hence, the need
     // for the ability to create a "dud" scope. An example can be seen in the above diagram with the node representing
-    // if (x == 1) scope having nothing in its level
+    // if (x == 1) scope having nothing in its level -- this if-block does not create any new entry; the x and y are still reachable from this level
     private val scopeEntry: Pair<String, ScopeEntry>? = null,
 ) : Scope {
     override fun getEntry(name: String): ScopeEntry? =
@@ -201,10 +202,10 @@ private class ScopeImpl(
 
     private fun existInLocalScope(name: String): Boolean =
         scopeSequence()
-            .takeWhile { it.level == this.level }
+            .takeWhile { it.level == this.level } // looks at ScopeEntry, and prev ones until the level changes
             .any { it.scopeEntry != null && it.scopeEntry.first == name }
 
-    private fun scopeSequence(): Sequence<ScopeImpl> = generateSequence(this) { it.previous }
+    private fun scopeSequence(): Sequence<ScopeImpl> = generateSequence(this) { it.previous } // same as generateSequence(this, { it.previous })
 }
 
 private class ResolvedEnvironmentImpl(
@@ -272,6 +273,7 @@ private class ResolvedEnvironmentImpl(
         scopeAvailableAtEndOfEachCompound[compound] ?: throw IllegalArgumentException("No scope for $compound")
 }
 
+// Returns identifier names that node depends on
 private fun collectUsedModuleScopeNames(node: AstNode): Set<String> {
     fun collectAction(
         node: AstNode,
