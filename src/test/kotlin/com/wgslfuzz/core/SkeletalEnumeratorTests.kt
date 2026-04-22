@@ -203,7 +203,7 @@ class SkeletalEnumeratorTests {
     @Test
     fun binaryExpressionIsCandidateNotItsLiteralOperands() {
         // `a + 1i` has one binary expression candidate; the literal `1i` is excluded.
-        // `a` is an Identifier with Reference type -> included.
+        // `a` is an Identifier with i32 type -> included.
         val src = """
             fn f(a: i32) -> i32 {
               return a + 1i;
@@ -213,28 +213,96 @@ class SkeletalEnumeratorTests {
         val env = resolve(tu)
         val candidates = collectSkeletalCandidates(tu, env)
         // Expect: Binary(a+1i), Identifier(a) — not IntLiteral(1i)
-        val kinds = candidates.map { (expr, _) -> expr::class.simpleName }
+        val kinds = candidates.map { it.expr::class.simpleName }
         assertTrue(kinds.contains("Binary"), "Expected Binary among candidates: $kinds")
         assertTrue(kinds.contains("Identifier"), "Expected Identifier among candidates: $kinds")
         assertTrue(!kinds.contains("IntLiteral"), "IntLiteral should be excluded: $kinds")
     }
 
     // -------------------------------------------------------------------------
-    // singleReplacementSkeletons — count equals number of candidates
+    // collectSkeletalCandidates — scope is captured per expression
     // -------------------------------------------------------------------------
 
     @Test
-    fun skeletonCountMatchesCandidateCount() {
+    fun candidateScopeExcludesVariableDeclaredByContainingStatement() {
+        // The initializer `a + 1i` of `var x` must NOT see `x` in scope (x isn't declared yet).
         val src = """
-            fn f(a: i32, b: i32) -> i32 {
-              return a + b;
+            fn f(a: i32) -> i32 {
+              var x : i32 = a + 1i;
+              return x;
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val candidates = collectSkeletalCandidates(tu, env)
+        val binaryCandidate = candidates.first { it.expr is Expression.Binary }
+        val scopeNames = binaryCandidate.scope.getAllEntries().map { it.declName }
+        assertTrue("a" in scopeNames, "Expected 'a' in scope of initializer")
+        assertTrue("x" !in scopeNames, "Expected 'x' NOT in scope of its own initializer")
+    }
+
+    // -------------------------------------------------------------------------
+    // singleReplacementSkeletons — no matching variable → no skeleton
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun noMatchingVariableYieldsNoSkeletons() {
+        // The only non-literal expression is `1i == 2i` with type bool, but there are no bool
+        // variables in scope, so no skeletons should be produced.
+        val src = """
+            fn f() -> bool {
+              return (1i == 2i);
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        assertTrue(skeletons.isEmpty(), "Expected no skeletons when no variable of matching type is in scope")
+    }
+
+    // -------------------------------------------------------------------------
+    // singleReplacementSkeletons — one variable per type → one skeleton per candidate
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun oneVariableYieldsOneSkeletonPerCandidate() {
+        // Only parameter `a: i32` is in scope for both candidates (Binary and Identifier).
+        // Each candidate should yield exactly one skeleton.
+        val src = """
+            fn f(a: i32) -> i32 {
+              return (a + 1i);
             }
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         val candidates = collectSkeletalCandidates(tu, env)
         val skeletons = singleReplacementSkeletons(tu, env).toList()
+        // 2 candidates × 1 in-scope variable = 2 skeletons
         assertEquals(candidates.size, skeletons.size)
+    }
+
+    // -------------------------------------------------------------------------
+    // singleReplacementSkeletons — replacement is an Identifier, not a literal
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun replacementIsIdentifierNotLiteral() {
+        val src = """
+            fn f(a: i32, b: i32) -> i32 {
+              return (a + b);
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        assertTrue(skeletons.isNotEmpty())
+        // At least one skeleton should have the binary replaced by an identifier
+        val binaryReplacedSkeletons = skeletons.filter { skeleton ->
+            val fn = skeleton.globalDecls.filterIsInstance<GlobalDecl.Function>().first()
+            val ret = fn.body.statements.filterIsInstance<Statement.Return>().first()
+            ret.expression is Expression.Identifier
+        }
+        assertTrue(binaryReplacedSkeletons.isNotEmpty(), "Expected at least one skeleton where binary was replaced by an identifier")
     }
 
     // -------------------------------------------------------------------------
@@ -262,33 +330,57 @@ class SkeletalEnumeratorTests {
     }
 
     // -------------------------------------------------------------------------
-    // singleReplacementSkeletons — replaced expression becomes a placeholder
+    // singleReplacementSkeletons — multiple variables yield multiple skeletons per candidate
     // -------------------------------------------------------------------------
 
     @Test
-    fun singleBinaryReplacedByZero() {
-        // A function returning a single binary expression: the one skeleton
-        // should return 0i directly.
+    fun multipleVariablesYieldMultipleSkeletonsPerCandidate() {
+        // 3 candidates (Binary, Identifier(a), Identifier(b)) × 2 in-scope variables (a, b) = 6 skeletons
         val src = """
             fn f(a: i32, b: i32) -> i32 {
-              return (a + b);
+              return a + b;
             }
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        // Find the skeleton that replaced the Binary node (a + b)
         val skeletons = singleReplacementSkeletons(tu, env).toList()
-        val binarySkeletons = skeletons.filter { skeleton ->
-            // In the skeleton the return expression should be a literal or constructor (not Binary)
-            val fn = skeleton.globalDecls.filterIsInstance<GlobalDecl.Function>().first()
-            val ret = fn.body.statements.filterIsInstance<Statement.Return>().first()
-            ret.expression !is Expression.Binary
-        }
-        assertTrue(binarySkeletons.isNotEmpty(), "Expected at least one skeleton where binary was replaced")
+        assertEquals(6, skeletons.size)
     }
 
     // -------------------------------------------------------------------------
-    // singleReplacementSkeletons — vec type placeholder
+    // singleReplacementSkeletons — replacement uses correct variable name
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun replacementUsesVariableFromScope() {
+        // With only `a` in scope, every replacement must be `a`.
+        val src = """
+            fn f(a: i32) -> i32 {
+              return (a + 1i);
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        // All replacements should be identifier `a`
+        for (skeleton in skeletons) {
+            val fn = skeleton.globalDecls.filterIsInstance<GlobalDecl.Function>().first()
+            val ret = fn.body.statements.filterIsInstance<Statement.Return>().first()
+            if (ret.expression is Expression.Identifier) {
+                assertEquals("a", (ret.expression as Expression.Identifier).name)
+            }
+        }
+        // Specifically: a skeleton where (a + 1i) is replaced by `a` must exist
+        val binaryReplacedByA = skeletons.any { skeleton ->
+            val fn = skeleton.globalDecls.filterIsInstance<GlobalDecl.Function>().first()
+            val ret = fn.body.statements.filterIsInstance<Statement.Return>().first()
+            ret.expression is Expression.Identifier && (ret.expression as Expression.Identifier).name == "a"
+        }
+        assertTrue(binaryReplacedByA, "Expected a skeleton where (a + 1i) is replaced by identifier 'a'")
+    }
+
+    // -------------------------------------------------------------------------
+    // singleReplacementSkeletons — vec type: identifier replacement
     // -------------------------------------------------------------------------
 
     @Test
@@ -302,9 +394,9 @@ class SkeletalEnumeratorTests {
         val env = resolve(tu)
         val candidates = collectSkeletalCandidates(tu, env)
         assertTrue(candidates.isNotEmpty())
-        // All placeholders for vec2<f32> candidates should be Vec2ValueConstructor
-        for ((_, type) in candidates.filter { (_, t) -> t is Type.Vector }) {
-            val p = placeholderFor(type)
+        // All placeholders for vec2<f32> candidates should be Vec2ValueConstructor (placeholderFor still works)
+        for (candidate in candidates.filter { it.type is Type.Vector }) {
+            val p = placeholderFor(candidate.type)
             assertIs<Expression.VectorValueConstructor>(p)
         }
     }

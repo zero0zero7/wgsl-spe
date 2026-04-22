@@ -76,34 +76,89 @@ fun placeholderFor(type: Type): Expression? =
     }
 
 /**
- * Returns all non-trivial [Expression] nodes in [tu] paired with their placeholder-eligible
- * concrete type. Literals are excluded (they are already maximally simple).
- * Expressions whose type has no valid placeholder (e.g. textures, pointers) are excluded.
+ * A candidate expression for skeletal replacement, paired with its concrete type and the scope
+ * available at the point where the expression appears.
+ */
+data class SkeletalCandidate(val expr: Expression, val type: Type, val scope: Scope)
+
+/**
+ * Returns all non-trivial [Expression] nodes in [tu] as [SkeletalCandidate]s, each capturing the
+ * expression, its concrete type, and the scope visible at that expression. Literals are excluded
+ * (they are already maximally simple). Expressions whose type has no valid placeholder (e.g.
+ * textures, pointers) are excluded.
  */
 fun collectSkeletalCandidates(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
-): List<Pair<Expression, Type>> =
-    nodesPreOrder(tu)
-        .filterIsInstance<Expression>()
-        .filter { it !is Expression.BoolLiteral && it !is Expression.IntLiteral && it !is Expression.FloatLiteral }
-        .mapNotNull { expr ->
-            val rawType = env.typeOf(expr)
-            val concreteType = defaultConcretizationOf(rawType)
-            if (placeholderFor(concreteType) != null) expr to concreteType else null
+): List<SkeletalCandidate> {
+    val result = mutableListOf<SkeletalCandidate>()
+    collectCandidatesFromNode(tu, null, env, result)
+    return result
+}
+
+private fun collectCandidatesFromNode(
+    node: AstNode,
+    enclosingStatement: Statement?,
+    env: ResolvedEnvironment,
+    result: MutableList<SkeletalCandidate>,
+) {
+    val currentStatement: Statement? = if (node is Statement) node else enclosingStatement
+
+    if (node is Expression &&
+        node !is Expression.BoolLiteral &&
+        node !is Expression.IntLiteral &&
+        node !is Expression.FloatLiteral
+    ) {
+        val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope // from `scope`, can obtain all Ast nodes available at that scope
+        val rawType = env.typeOf(node) // resolved type
+        val concreteType = defaultConcretizationOf(rawType)
+        if (placeholderFor(concreteType) != null) {
+            result.add(SkeletalCandidate(node, concreteType, scope))
         }
+    }
+
+    traverse(
+        { child, _ -> collectCandidatesFromNode(child, currentStatement, env, result) },
+        node,
+        Unit,
+    )
+}
+
+// Strips a Reference wrapper to get the underlying store type for equality comparisons.
+private fun valueTypeOf(type: Type): Type =
+    when (type) {
+        is Type.Reference -> type.storeType
+        else -> type
+    }
+
+// Returns names of all value declarations in [scope] whose store type matches [targetType].
+private fun variablesOfType(
+    scope: Scope,
+    targetType: Type,
+): List<String> {
+    val targetValueType = defaultConcretizationOf(valueTypeOf(targetType))
+    return scope
+        .getAllEntries()
+        .filterIsInstance<ScopeEntry.TypedDecl>()
+        .filter { it !is ScopeEntry.Struct && it !is ScopeEntry.TypeAlias }
+        .filter { entry -> defaultConcretizationOf(valueTypeOf(entry.type)) == targetValueType }
+        .map { it.declName }
+}
 
 /**
  * Lazily enumerates all single-expression skeletal variants of [tu].
- * Each emitted [TranslationUnit] is identical to [tu] except that exactly one
- * candidate expression has been replaced by its zero-value placeholder.
+ * Each emitted [TranslationUnit] is identical to [tu] except that exactly one candidate
+ * expression has been replaced by a reference to an in-scope variable of the same type.
+ * Candidates for which no matching variable exists in scope are skipped.
  */
 fun singleReplacementSkeletons(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
 ): Sequence<TranslationUnit> = sequence {
-    for ((target, concreteType) in collectSkeletalCandidates(tu, env)) {
-        val placeholder = placeholderFor(concreteType) ?: continue
-        yield(tu.clone { node -> if (node === target) placeholder else null })
+    for ((target, concreteType, scope) in collectSkeletalCandidates(tu, env)) {
+        for (varName in variablesOfType(scope, concreteType)) {
+            val replacement = Expression.Identifier(varName)
+            yield(tu.clone { node -> if (node === target) replacement else null })
+        }
     }
 }
