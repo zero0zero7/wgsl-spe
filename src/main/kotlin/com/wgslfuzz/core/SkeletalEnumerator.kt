@@ -112,9 +112,7 @@ private fun collectCandidatesFromNode(
         val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope // from `scope`, can obtain all Ast nodes available at that scope
         val rawType = env.typeOf(node) // resolved type
         val concreteType = defaultConcretizationOf(rawType)
-        if (placeholderFor(concreteType) != null) {
-            result.add(SkeletalCandidate(node, concreteType, scope))
-        }
+        result.add(SkeletalCandidate(node, concreteType, scope))
     }
 
     traverse(
