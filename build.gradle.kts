@@ -121,7 +121,7 @@ tasks.register<JavaExec>("compareImages") {
 tasks.register<JavaExec>("parseAndPrettyPrint") {
     mainClass.set("com.wgslfuzz.tools.ParseAndPrettyPrintKt")
     classpath = sourceSets["main"].runtimeClasspath
-    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005")
+    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
 }
 
 tasks.register<JavaExec>("printShaderWithCommentary") {
@@ -137,11 +137,11 @@ tasks.register<JavaExec>("showNumberOfNodes") {
 tasks.register<JavaExec>("dumpAst") {
     mainClass.set("com.wgslfuzz.tools.DumpAstKt")
     classpath = sourceSets["main"].runtimeClasspath
-    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005")
+    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
 }
 
 tasks.register<JavaExec>("printSkeletalPrograms") {
     mainClass.set("com.wgslfuzz.tools.PrintSkeletalProgramsKt")
     classpath = sourceSets["main"].runtimeClasspath
-    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005")
+    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
 }
