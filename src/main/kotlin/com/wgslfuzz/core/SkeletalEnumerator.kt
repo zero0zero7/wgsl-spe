@@ -20,13 +20,12 @@ package com.wgslfuzz.core
  * A candidate expression for skeletal replacement, paired with its concrete type and the scope
  * available at the point where the expression appears.
  */
-data class SkeletalCandidate(val expr: Expression, val type: Type, val scope: Scope)
+data class SkeletalCandidate(val identifier: AstNode, val type: Type, val scope: Scope)
 
 /**
  * Returns all non-trivial [Expression] nodes in [tu] as [SkeletalCandidate]s, each capturing the
  * expression, its concrete type, and the scope visible at that expression. Literals are excluded
- * (they are already maximally simple). Expressions whose type has no valid placeholder (e.g.
- * textures, pointers) are excluded.
+ * (they are already maximally simple).
  */
 fun collectSkeletalCandidates(
     tu: TranslationUnit,
@@ -45,15 +44,47 @@ private fun collectCandidatesFromNode(
 ) {
     val currentStatement: Statement? = if (node is Statement) node else enclosingStatement
 
-    if (node is Expression &&
-        node !is Expression.BoolLiteral &&
-        node !is Expression.IntLiteral &&
-        node !is Expression.FloatLiteral
-    ) {
-        val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope // from `scope`, can obtain all Ast nodes available at that scope
-        val rawType = env.typeOf(node) // resolved type
+    fun helper(node: AstNode, rawType: Type) {
+        val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope
         val concreteType = defaultConcretizationOf(rawType)
         result.add(SkeletalCandidate(node, concreteType, scope))
+    }
+
+    fun helper(node: AstNode, rawType: Type, scope: Scope) {
+        val concreteType = defaultConcretizationOf(rawType)
+        result.add(SkeletalCandidate(node, concreteType, scope))
+    }
+
+    when (node) {
+        is Expression.Identifier -> {
+            val rawType: Type = env.typeOf(node)
+            helper(node, rawType)
+        }
+        is LhsExpression.Identifier -> {
+            val rawType: Type = env.typeOf(node)
+            helper(node, rawType)
+        }
+        is GlobalDecl.Variable -> {
+            val init: Expression? = node.initializer
+            if (init != null) {
+                helper(node, env.typeOf(init))
+            }
+            else {
+                val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope
+                helper(node, node.typeDecl!!.toType(scope, env), scope)
+            }
+        }
+        is Statement.Variable -> {
+            val init: Expression? = node.initializer
+            if (init != null) {
+                helper(node, env.typeOf(init))
+            }
+            else {
+                val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope
+                helper(node, node.typeDecl!!.toType(scope, env), scope)
+            }
+        }
+        else -> {}
     }
 
     traverse(

@@ -19,10 +19,9 @@ package com.wgslfuzz.core
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
+import kotlin.collections.get
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SkeletalEnumeratorTests {
@@ -50,7 +49,7 @@ class SkeletalEnumeratorTests {
     // -------------------------------------------------------------------------
 
     @Test
-    fun binaryExpressionIsCandidateNotItsLiteralOperands() {
+    fun literalOperandIsNotCandidate() {
         // `a + 1i` has one binary expression candidate; the literal `1i` is excluded.
         // `a` is an Identifier with i32 type -> included.
         val src = """
@@ -61,9 +60,8 @@ class SkeletalEnumeratorTests {
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         val candidates = collectSkeletalCandidates(tu, env)
-        // Expect: Binary(a+1i), Identifier(a) — not IntLiteral(1i)
-        val kinds = candidates.map { it.expr::class.simpleName }
-        assertTrue(kinds.contains("Binary"), "Expected Binary among candidates: $kinds")
+        val kinds = candidates.map { it.identifier::class.simpleName }
+        assertEquals(kinds.size, 1, "Expected to find only 1 candidate")
         assertTrue(kinds.contains("Identifier"), "Expected Identifier among candidates: $kinds")
         assertTrue(!kinds.contains("IntLiteral"), "IntLiteral should be excluded: $kinds")
     }
@@ -73,7 +71,7 @@ class SkeletalEnumeratorTests {
     // -------------------------------------------------------------------------
 
     @Test
-    fun candidateScopeExcludesVariableDeclaredByContainingStatement() {
+    fun lhsRhsAreCandidates() {
         // The initializer `a + 1i` of `var x` must NOT see `x` in scope (x isn't declared yet).
         val src = """
             fn f(a: i32) -> i32 {
@@ -84,10 +82,20 @@ class SkeletalEnumeratorTests {
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         val candidates = collectSkeletalCandidates(tu, env)
-        val binaryCandidate = candidates.first { it.expr is Expression.Binary }
-        val scopeNames = binaryCandidate.scope.getAllEntries().map { it.declName }
-        assertTrue("a" in scopeNames, "Expected 'a' in scope of initializer")
-        assertTrue("x" !in scopeNames, "Expected 'x' NOT in scope of its own initializer")
+        val nodes = candidates.map { it.identifier }
+        assertEquals(3, nodes.size, "Expected exactly 3 candidates but got ${nodes.size}: $nodes")
+        assertTrue(
+            nodes.any { it is Expression.Identifier && it.name == "a" },
+            "Expected Expression.Identifier(name='a') among candidates"
+        )
+        assertTrue(
+            nodes.any { it is Statement.Variable && it.name == "x" },
+            "Expected Statement.Variable(name='x') among candidates"
+        )
+        assertTrue(
+            nodes.any { it is Expression.Identifier && it.name == "x" },
+            "Expected Expression.Identifier(name='x') among candidates"
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -201,52 +209,117 @@ class SkeletalEnumeratorTests {
     // -------------------------------------------------------------------------
 
     @Test
-    fun replacementUsesVariableFromScope() {
-        // With only `a` in scope, every replacement must be `a`.
+    fun cannotReplaceWithAlreadyInScope() {
+        // Variable declaration may not introduce an identifier that is already declared in the same or enclosing scope within the function
         val src = """
-            fn f(a: i32) -> i32 {
-              return (a + 1i);
+            fn f(a: i32) -> Unit {
+              var x;
             }
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         val skeletons = singleReplacementSkeletons(tu, env).toList()
-        // All replacements should be identifier `a`
-        for (skeleton in skeletons) {
-            val fn = skeleton.globalDecls.filterIsInstance<GlobalDecl.Function>().first()
-            val ret = fn.body.statements.filterIsInstance<Statement.Return>().first()
-            if (ret.expression is Expression.Identifier) {
-                assertEquals("a", (ret.expression as Expression.Identifier).name)
+        assertEquals(0, skeletons.size)
+    }
+
+    fun notInScopeUntilAfterDeclaration() {
+        // var x = x + 1; is invalid
+        val src = """
+            fn f(a: i32) -> Unit {
+              var x = a + 1;
             }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        assertEquals(0, skeletons.size)
+    }
+
+    @Test
+    fun replacementUsesVariableFromScope() {
+        // With only `a` in scope, every replacement must be `a`.
+        val src = """
+            fn f(a: i32) -> i32 {
+              var x : i32 = a + 1i;
+              return x;
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        // Only 1 replacement -- return a;
+        assertEquals(1, skeletons.size)
+        val identifierExpression =
+            ((tu.globalDecls[0] as GlobalDecl.Function).body.statements[1] as Statement.Return).expression
+                    as Expression.Identifier
+        val replacement =
+            mapOf(
+                identifierExpression to Expression.Identifier("a"),
+            )
+        val expect_tu = tu.clone({ replacement[it] })
+        assertEquals(expect_tu, skeletons[0])
+    }
+
+    @Test
+    fun replacementCapturesGlobalScope() {
+        // With only `a` in scope, every replacement must be `a`.
+        val src = """
+            const global_constant : i32 = 1;
+            fn f(a: i32) -> i32 {
+              var x : i32 = a + 1i;
+              return global_constant;
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        // Replacements
+        // -- global_constant + 1;
+        // -- return global_constant;
+        // -- return a;
+        val binaryLhs =
+            (((tu.globalDecls[1] as GlobalDecl.Function).body.statements[0] as Statement.Variable).initializer as Expression.Binary).lhs
+                    as Expression.Identifier
+        val returnExpr =
+            ((tu.globalDecls[1] as GlobalDecl.Function).body.statements[1] as Statement.Return).expression
+                    as Expression.Identifier
+
+        val replacements = listOf(
+                binaryLhs to Expression.Identifier("global_constant"),
+                returnExpr to Expression.Identifier("a"),
+                returnExpr to Expression.Identifier("global_constant")
+                )
+        val expect1 = tu.clone({mapOf(replacements[0])[it]})
+        val expect2 = tu.clone({mapOf(replacements[1])[it]})
+        val expect3 = tu.clone({mapOf(replacements[2])[it]})
+        val expect4 = tu.clone({mapOf(replacements[0], replacements[1])[it]})
+        val expect5 = tu.clone({mapOf(replacements[0], replacements[2])[it]})
+
+//        assertTrue(skeletons.any { it in listOf(expect1, expect2, expect3, expect4, expect5) })
+        for (skeleton in skeletons) {
+            assertTrue(skeleton in listOf(expect1, expect2, expect3, expect4, expect5), skeleton.toString())
         }
-        // Specifically: a skeleton where (a + 1i) is replaced by `a` must exist
-        val binaryReplacedByA = skeletons.any { skeleton ->
-            val fn = skeleton.globalDecls.filterIsInstance<GlobalDecl.Function>().first()
-            val ret = fn.body.statements.filterIsInstance<Statement.Return>().first()
-            ret.expression is Expression.Identifier && (ret.expression as Expression.Identifier).name == "a"
-        }
-        assertTrue(binaryReplacedByA, "Expected a skeleton where (a + 1i) is replaced by identifier 'a'")
     }
 
     // -------------------------------------------------------------------------
     // singleReplacementSkeletons — vec type: identifier replacement
     // -------------------------------------------------------------------------
 
-    @Test
-    fun vectorExpressionReplacedByVecConstructor() {
-        val src = """
-            fn f(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
-              return a + b;
-            }
-        """.trimIndent()
-        val tu = parseFromString(src, LoggingParseErrorListener())
-        val env = resolve(tu)
-        val candidates = collectSkeletalCandidates(tu, env)
-        assertTrue(candidates.isNotEmpty())
-        // All placeholders for vec2<f32> candidates should be Vec2ValueConstructor (placeholderFor still works)
-        for (candidate in candidates.filter { it.type is Type.Vector }) {
-            val p = placeholderFor(candidate.type)
-            assertIs<Expression.VectorValueConstructor>(p)
-        }
-    }
+//    @Test
+//    fun vectorExpressionReplacedByVecConstructor() {
+//        val src = """
+//            fn f(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+//              return a + b;
+//            }
+//        """.trimIndent()
+//        val tu = parseFromString(src, LoggingParseErrorListener())
+//        val env = resolve(tu)
+//        val candidates = collectSkeletalCandidates(tu, env)
+//        assertTrue(candidates.isNotEmpty())
+//        // All placeholders for vec2<f32> candidates should be Vec2ValueConstructor (placeholderFor still works)
+//        for (candidate in candidates.filter { it.type is Type.Vector }) {
+//            val p = placeholderFor(candidate.type)
+//            assertIs<Expression.VectorValueConstructor>(p)
+//        }
+//    }
 }

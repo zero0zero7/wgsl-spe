@@ -69,6 +69,7 @@ tasks.generateGrammarSource {
 
 tasks.test {
     useJUnitPlatform()
+    testLogging { showStandardStreams = true }
 }
 
 java {
