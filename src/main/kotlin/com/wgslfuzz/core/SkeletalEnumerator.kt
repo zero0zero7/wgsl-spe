@@ -17,65 +17,6 @@
 package com.wgslfuzz.core
 
 /**
- * Returns a zero-value placeholder Expression for [type], or null if the type
- * cannot be represented as a simple value constructor (e.g. pointers, atomics, textures).
- *
- * Abstract types (AbstractInteger, AbstractFloat -- no fixed bit-width) are treated as their concrete
- * defaults (I32, F32) so the returned expression is always well-typed.
- */
-fun placeholderFor(type: Type): Expression? =
-    when (type) {
-        Type.Bool -> Expression.BoolLiteral("false")
-        Type.AbstractInteger, Type.I32 -> Expression.IntLiteral("0i")
-        Type.U32 -> Expression.IntLiteral("0u")
-        Type.AbstractFloat, Type.F32 -> Expression.FloatLiteral("0.0f")
-        Type.F16 -> Expression.FloatLiteral("0.0h")
-        is Type.Vector -> {
-            val elem = placeholderFor(type.elementType) ?: return null
-            val args = List(type.width) { elem }
-            when (type.width) {
-                2 -> Expression.Vec2ValueConstructor(args = args)
-                3 -> Expression.Vec3ValueConstructor(args = args)
-                4 -> Expression.Vec4ValueConstructor(args = args)
-                else -> null
-            }
-        }
-        is Type.Matrix -> {
-            val colVecType = Type.Vector(type.numRows, type.elementType)
-            val col = placeholderFor(colVecType) ?: return null
-            val cols = List(type.numCols) { col }
-            when (type.numCols to type.numRows) {
-                2 to 2 -> Expression.Mat2x2ValueConstructor(args = cols)
-                2 to 3 -> Expression.Mat2x3ValueConstructor(args = cols)
-                2 to 4 -> Expression.Mat2x4ValueConstructor(args = cols)
-                3 to 2 -> Expression.Mat3x2ValueConstructor(args = cols)
-                3 to 3 -> Expression.Mat3x3ValueConstructor(args = cols)
-                3 to 4 -> Expression.Mat3x4ValueConstructor(args = cols)
-                4 to 2 -> Expression.Mat4x2ValueConstructor(args = cols)
-                4 to 3 -> Expression.Mat4x3ValueConstructor(args = cols)
-                4 to 4 -> Expression.Mat4x4ValueConstructor(args = cols)
-                else -> null
-            }
-        }
-        is Type.Array ->
-            if (type.elementCount == null) null
-            else {
-                val elem = placeholderFor(type.elementType) ?: return null
-                Expression.ArrayValueConstructor(
-                    args = List(type.elementCount) { elem },
-                )
-            }
-        is Type.Struct -> {
-            val memberExprs = type.members.map { (_, memberType) -> placeholderFor(memberType) ?: return null }
-            Expression.StructValueConstructor(constructorName = type.name, args = memberExprs)
-        }
-        // A reference in an rvalue context is implicitly loaded; replace with a placeholder for the store type.
-        is Type.Reference -> placeholderFor(type.storeType)
-        // Pointer, Atomic, Texture, Sampler — no simple value constructor exists.
-        else -> null
-    }
-
-/**
  * A candidate expression for skeletal replacement, paired with its concrete type and the scope
  * available at the point where the expression appears.
  */
