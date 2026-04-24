@@ -26,6 +26,7 @@ package com.wgslfuzz.core
 
 import kotlinx.serialization.Serializable
 import java.io.PrintStream
+import kotlinx.serialization.json.Json
 
 // AST nodes depend on a number of enum classes. The enum classes that are *only* used by AST
 // nodes appear here. Enum classes that are also used by types appear in separate files.
@@ -125,6 +126,11 @@ enum class InterpolateSampling {
 sealed interface AstNode {
     val metadata: Set<Metadata>
 }
+
+private val astJson = Json { encodeDefaults = true }
+// Does not ignore metadata, might require revisit (TODO)
+fun AstNode.deepEquals(other: AstNode): Boolean = astJson.encodeToString(AstNode.serializer(), this) == astJson.encodeToString(AstNode.serializer(), other)
+
 
 /**
  * A translation unit corresponds to a fully parsed WGSL program.
