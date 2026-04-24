@@ -30,65 +30,78 @@ data class SkeletalCandidate(val identifier: AstNode, val type: Type, val scope:
 fun collectSkeletalCandidates(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
-): List<SkeletalCandidate> {
-    val result = mutableListOf<SkeletalCandidate>()
-    collectCandidatesFromNode(tu, null, env, result)
-    return result
+): Pair<List<SkeletalCandidate>, List<SkeletalCandidate>> {
+    val declarations = mutableListOf<SkeletalCandidate>()
+    val usages = mutableListOf<SkeletalCandidate>()
+    collectCandidatesFromNode(tu, null, env, declarations, usages)
+    return Pair(declarations, usages)
 }
 
 private fun collectCandidatesFromNode(
     node: AstNode,
     enclosingStatement: Statement?,
     env: ResolvedEnvironment,
-    result: MutableList<SkeletalCandidate>,
+    declarations: MutableList<SkeletalCandidate>, // WGSL allows use of declared but uninitialized variables
+    usages: MutableList<SkeletalCandidate>
 ) {
+
     val currentStatement: Statement? = if (node is Statement) node else enclosingStatement
 
-    fun helper(node: AstNode, rawType: Type) {
+    fun helper(node: AstNode, rawType: Type, decl: Boolean) {
         val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope
         val concreteType = defaultConcretizationOf(rawType)
-        result.add(SkeletalCandidate(node, concreteType, scope))
+        if (decl) {
+            declarations.add(SkeletalCandidate(node, concreteType, scope))
+        }
+        else {
+            usages.add(SkeletalCandidate(node, concreteType, scope))
+        }
     }
 
-    fun helper(node: AstNode, rawType: Type, scope: Scope) {
+    fun helper(node: AstNode, rawType: Type, scope: Scope, decl: Boolean) {
         val concreteType = defaultConcretizationOf(rawType)
-        result.add(SkeletalCandidate(node, concreteType, scope))
+        if (decl) {
+            declarations.add(SkeletalCandidate(node, concreteType, scope))
+        }
+        else {
+            usages.add(SkeletalCandidate(node, concreteType, scope))
+        }
     }
 
     when (node) {
         is Expression.Identifier -> {
             val rawType: Type = env.typeOf(node)
-            helper(node, rawType)
+            helper(node, rawType, false)
         }
         is LhsExpression.Identifier -> {
             val rawType: Type = env.typeOf(node)
-            helper(node, rawType)
+            helper(node, rawType, false)
         }
         is GlobalDecl.Variable -> {
             val init: Expression? = node.initializer
             if (init != null) {
-                helper(node, env.typeOf(init))
+                helper(node, env.typeOf(init), true)
             }
             else {
                 val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope
-                helper(node, node.typeDecl!!.toType(scope, env), scope)
+                helper(node, node.typeDecl!!.toType(scope, env), scope, true)
             }
         }
         is Statement.Variable -> {
             val init: Expression? = node.initializer
             if (init != null) {
-                helper(node, env.typeOf(init))
+                helper(node, env.typeOf(init), true)
             }
             else {
                 val scope: Scope = currentStatement?.let { env.scopeAvailableBefore(it) } ?: env.globalScope
-                helper(node, node.typeDecl!!.toType(scope, env), scope)
+                helper(node, node.typeDecl!!.toType(scope, env), scope, true)
             }
         }
         else -> {}
     }
 
     traverse(
-        { child, _ -> collectCandidatesFromNode(child, currentStatement, env, result) },
+        { child, _ -> collectCandidatesFromNode(child, currentStatement, env, declarations, usages) },
         node,
         Unit,
     )
@@ -125,10 +138,12 @@ fun singleReplacementSkeletons(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
 ): Sequence<TranslationUnit> = sequence {
-    for ((target, concreteType, scope) in collectSkeletalCandidates(tu, env)) {
+    val (decl, usage) = collectSkeletalCandidates(tu, env)
+    for ((id, concreteType, scope) in usage) {
         for (varName in variablesOfType(scope, concreteType)) {
-            val replacement = Expression.Identifier(varName)
-            yield(tu.clone { node -> if (node === target) replacement else null })
+//            val replacement = Expression.Identifier(varName)
+            val replacement = id.cloneWithName(varName)
+            yield(tu.clone { node -> if (node === id) replacement else null })
         }
     }
 }

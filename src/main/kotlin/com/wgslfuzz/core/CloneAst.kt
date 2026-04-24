@@ -36,6 +36,13 @@ fun <T : AstNode> List<T>.clone(replacements: (AstNode) -> AstNode? = { null }):
 @Suppress("UNCHECKED_CAST")
 fun <T : AstNode> T.cloneWithoutReplacementOnFirstNode(replacements: (AstNode) -> AstNode?): T = deepCloneHelper(this, replacements) as T
 
+/**
+ * Deeply clones an [AstNode], replacing its [name] field (if it has one) with [newName].
+ * Only the top-level node is renamed; child nodes are cloned unchanged.
+ */
+@Suppress("UNCHECKED_CAST")
+fun <T : AstNode> T.cloneWithName(newName: String): T = deepCloneHelper(this, { null }, newName) as T
+
 private fun cloneHelper(
     node: AstNode,
     replacements: (AstNode) -> AstNode?,
@@ -47,6 +54,7 @@ private fun cloneHelper(
 private fun deepCloneHelper(
     node: AstNode,
     replacements: (AstNode) -> AstNode?,
+    newName: String? = null,
 ) = with(node) {
     when (this) {
         is Attribute.Align -> Attribute.Align(expression.clone(replacements), metadata)
@@ -91,7 +99,7 @@ private fun deepCloneHelper(
                 args.clone(replacements),
                 metadata,
             )
-        is Expression.Identifier -> Expression.Identifier(name, metadata)
+        is Expression.Identifier -> Expression.Identifier(newName ?: name, metadata)
         is Expression.IndexLookup -> Expression.IndexLookup(target.clone(replacements), index.clone(replacements), metadata)
         is Expression.IntLiteral -> Expression.IntLiteral(text, metadata)
         is Expression.MemberLookup -> Expression.MemberLookup(receiver.clone(replacements), memberName, metadata)
@@ -189,7 +197,7 @@ private fun deepCloneHelper(
                 metadata,
             )
         is GlobalDecl.ConstAssert -> GlobalDecl.ConstAssert(expression.clone(replacements), metadata)
-        is GlobalDecl.Constant -> GlobalDecl.Constant(name, typeDecl?.clone(replacements), initializer.clone(replacements), metadata)
+        is GlobalDecl.Constant -> GlobalDecl.Constant(newName ?: name, typeDecl?.clone(replacements), initializer.clone(replacements), metadata)
         is GlobalDecl.Empty -> GlobalDecl.Empty(metadata)
         is GlobalDecl.Function ->
             GlobalDecl.Function(
@@ -214,7 +222,7 @@ private fun deepCloneHelper(
         is GlobalDecl.Variable ->
             GlobalDecl.Variable(
                 attributes.clone(replacements),
-                name,
+                newName ?: name,
                 addressSpace,
                 accessMode,
                 typeDecl?.clone(replacements),
@@ -223,11 +231,11 @@ private fun deepCloneHelper(
             )
         is LhsExpression.AddressOf -> LhsExpression.AddressOf(target.clone(replacements), metadata)
         is LhsExpression.Dereference -> LhsExpression.Dereference(target.clone(replacements), metadata)
-        is LhsExpression.Identifier -> LhsExpression.Identifier(name, metadata)
+        is LhsExpression.Identifier -> LhsExpression.Identifier(newName ?: name, metadata)
         is LhsExpression.IndexLookup -> LhsExpression.IndexLookup(target.clone(replacements), index.clone(replacements), metadata)
         is LhsExpression.MemberLookup -> LhsExpression.MemberLookup(receiver.clone(replacements), memberName, metadata)
         is LhsExpression.Paren -> LhsExpression.Paren(target.clone(replacements), metadata)
-        is ParameterDecl -> ParameterDecl(attributes.clone(replacements), name, typeDecl.clone(replacements), metadata)
+        is ParameterDecl -> ParameterDecl(attributes.clone(replacements), newName ?: name, typeDecl.clone(replacements), metadata)
         is Statement.Break -> Statement.Break(metadata)
         is Statement.ConstAssert -> Statement.ConstAssert(expression.clone(replacements), metadata)
         is Statement.Continue -> Statement.Continue(metadata)
@@ -264,7 +272,7 @@ private fun deepCloneHelper(
         is Statement.Value -> Statement.Value(isConst, name, typeDecl?.clone(replacements), initializer.clone(replacements), metadata)
         is Statement.Variable ->
             Statement.Variable(
-                name,
+                newName ?: name,
                 addressSpace,
                 accessMode,
                 typeDecl?.clone(replacements),
