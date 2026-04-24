@@ -166,6 +166,8 @@ private fun printTree(node: AstNode, out: PrintStream, prefix: String = "", chil
     }
 }
 
+fun dumpAst(node: AstNode, out: PrintStream) = printTree(node, out)
+
 fun main(args: Array<String>) {
     val parser = ArgParser("wgsl-fuzz AST dumper")
 

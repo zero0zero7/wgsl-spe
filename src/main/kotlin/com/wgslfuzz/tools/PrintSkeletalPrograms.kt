@@ -67,15 +67,15 @@ fun main(args: Array<String>) {
     val tu = shaderJob.tu
     val env = shaderJob.environment
 
-    val candidates = collectSkeletalCandidates(tu, env)
+    val (decls, usages) = collectSkeletalCandidates(tu, env)
     println("// Input: $shaderPath")
-    println("// Found ${candidates.size} skeletal candidate(s)\n")
+    println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
-    val maxSkeletons = limit ?: candidates.size
+    val maxSkeletons = limit ?: usages.size
     var index = 0
     for (skeleton in singleReplacementSkeletons(tu, env).take(maxSkeletons)) {
-        val (replacedExpr, concreteType) = candidates[index]
-        println("// --- Skeleton ${index + 1} / ${candidates.size} ---")
+        val (replacedExpr, concreteType) = usages[index]
+        println("// --- Skeleton ${index + 1} / ${usages.size} ---")
         println("// Replaced: ${replacedExpr::class.simpleName} (type: $concreteType)")
         val baos = ByteArrayOutputStream()
         AstWriter(out = PrintStream(baos)).emit(skeleton)
