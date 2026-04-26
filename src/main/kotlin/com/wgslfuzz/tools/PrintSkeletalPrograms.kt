@@ -20,7 +20,7 @@ import com.wgslfuzz.core.AstWriter
 import com.wgslfuzz.core.UniformBufferInfoByteLevel
 import com.wgslfuzz.core.createShaderJob
 import com.wgslfuzz.core.collectSkeletalCandidates
-import com.wgslfuzz.core.singleReplacementSkeletons
+import com.wgslfuzz.core.allReplacementSkeletons
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
@@ -47,6 +47,13 @@ fun main(args: Array<String>) {
             fullName = "limit",
             description = "Maximum number of skeletons to print (default: all)",
         )
+
+    val maxReplacements by parser
+        .option(
+            ArgType.Int,
+            fullName = "max-replacements",
+            description = "Maximum number of simultaneous replacements per skeleton (default: 1)",
+        ).default(1)
 
     val outputDir by parser
         .option(
@@ -82,14 +89,10 @@ fun main(args: Array<String>) {
     println("// Input: $shaderPath")
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
-    val maxSkeletons = limit ?: usages.size
-    var index = 0
-    for (skeleton in singleReplacementSkeletons(tu, env).take(maxSkeletons)) {
-        val (replacedExpr, concreteType) = usages[index]
-        println("// --- Skeleton ${index + 1} / ${usages.size} ---")
-        println("// Replaced: ${replacedExpr::class.simpleName} (type: $concreteType)")
-        val fileName = "skeleton_%03d.wgsl".format(index)
+    val skeletons = allReplacementSkeletons(tu, env, maxReplacements)
+    val maxSkeletons = limit ?: Int.MAX_VALUE
+    for ((idx, skeleton) in skeletons.take(maxSkeletons).withIndex()) {
+        val fileName = "skeleton_%03d.wgsl".format(idx)
         AstWriter(out = PrintStream(FileOutputStream(File(outDir, fileName)))).emit(skeleton)
-        index++
     }
 }
