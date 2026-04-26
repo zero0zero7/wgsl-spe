@@ -26,6 +26,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 
 fun equalTu(skeleton: TranslationUnit, accept: List<TranslationUnit>) : Int {
     for ((idx, tu) in accept.withIndex()) {
@@ -115,40 +116,39 @@ class SkeletalEnumeratorTests {
     // -------------------------------------------------------------------------
 
     @Test
-    fun noMatchingVariableYieldsNoSkeletons() {
-        // The only non-literal expression is `1i == 2i` with type bool, but there are no bool
-        // variables in scope, so no skeletons should be produced.
+    fun noUsageYieldsNoSkeletons() {
         val src = """
             fn f() -> bool {
+              const a = true;
+              const b = true;
               return (1i == 2i);
             }
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         val skeletons = singleReplacementSkeletons(tu, env).toList()
-        assertTrue(skeletons.isEmpty(), "Expected no skeletons when no variable of matching type is in scope")
+        assertTrue(skeletons.isEmpty(), "Expected no skeletons when there is no variable usage (only declarations)")
     }
 
     // -------------------------------------------------------------------------
     // singleReplacementSkeletons — one variable per type → one skeleton per candidate
     // -------------------------------------------------------------------------
 
-//    @Test
-//    fun oneVariableYieldsOneSkeletonPerCandidate() {
-//        // Only parameter `a: i32` is in scope for both candidates (Binary and Identifier).
-//        // Each candidate should yield exactly one skeleton.
-//        val src = """
-//            fn f(a: i32) -> i32 {
-//              return (a + 1i);
-//            }
-//        """.trimIndent()
-//        val tu = parseFromString(src, LoggingParseErrorListener())
-//        val env = resolve(tu)
-//        val candidates = collectSkeletalCandidates(tu, env)
-//        val skeletons = singleReplacementSkeletons(tu, env).toList()
-//        // 2 candidates × 1 in-scope variable = 2 skeletons
-//        assertEquals(candidates.size, skeletons.size)
-//    }
+    @Test
+    fun noMatchingTypeYieldsNoSkeletons() {
+        val src = """
+            fn f(a: i32) -> i32 {
+              const b = 1u;
+              return (a + 1i);
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val candidates = collectSkeletalCandidates(tu, env)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        assertEquals(1, skeletons.size, "Expected only the original source Tu")
+        assertTrue { equalTu(skeletons[0], listOf(tu)) == 0 }
+    }
 
     // -------------------------------------------------------------------------
     // singleReplacementSkeletons — replacement is an Identifier, not a literal
@@ -196,24 +196,6 @@ class SkeletalEnumeratorTests {
             parseFromString(text, errorListener)
             assertTrue(errorListener.loggedMessages.isEmpty(), "Skeleton failed to reparse:\n$text\nErrors: ${errorListener.loggedMessages}")
         }
-    }
-
-    // -------------------------------------------------------------------------
-    // singleReplacementSkeletons — multiple variables yield multiple skeletons per candidate
-    // -------------------------------------------------------------------------
-
-    @Test
-    fun multipleVariablesYieldMultipleSkeletonsPerCandidate() {
-        // 3 candidates (Binary, Identifier(a), Identifier(b)) × 2 in-scope variables (a, b) = 6 skeletons
-        val src = """
-            fn f(a: i32, b: i32) -> i32 {
-              return a + b;
-            }
-        """.trimIndent()
-        val tu = parseFromString(src, LoggingParseErrorListener())
-        val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
-        assertEquals(6, skeletons.size)
     }
 
     // -------------------------------------------------------------------------
@@ -328,21 +310,60 @@ class SkeletalEnumeratorTests {
     // singleReplacementSkeletons — vec type: identifier replacement
     // -------------------------------------------------------------------------
 
-//    @Test
-//    fun vectorExpressionReplacedByVecConstructor() {
-//        val src = """
-//            fn f(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
-//              return a + b;
-//            }
-//        """.trimIndent()
-//        val tu = parseFromString(src, LoggingParseErrorListener())
-//        val env = resolve(tu)
-//        val candidates = collectSkeletalCandidates(tu, env)
-//        assertTrue(candidates.isNotEmpty())
-//        // All placeholders for vec2<f32> candidates should be Vec2ValueConstructor (placeholderFor still works)
-//        for (candidate in candidates.filter { it.type is Type.Vector }) {
-//            val p = placeholderFor(candidate.type)
-//            assertIs<Expression.VectorValueConstructor>(p)
-//        }
-//    }
+    @Test
+    fun vectorExpressionReplacedByVecConstructor() {
+        val src = """
+            fn f(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
+              return a + b;
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        assertTrue(skeletons.isNotEmpty())
+
+        // Replacements
+        // -- a + a;
+        // -- b + b;
+        // -- b + a;
+        val returnExpr =
+            ((tu.globalDecls[0] as GlobalDecl.Function).body.statements[0] as Statement.Return).expression
+                    as Expression.Binary
+
+        val replacements = listOf(
+            returnExpr.lhs to Expression.Identifier("b"),
+            returnExpr.rhs to Expression.Identifier("a"),
+        )
+        val expect1 = tu.clone({mapOf(replacements[0])[it]})
+        val expect2 = tu.clone({mapOf(replacements[1])[it]})
+        val expect3 = tu.clone({mapOf(replacements[0], replacements[1])[it]})
+
+        var accept = listOf(tu, expect1, expect2, expect3)
+        val contains = MutableList(accept.size) {-1}
+        for (skeleton in skeletons) {
+            var corr = equalTu(skeleton, accept)
+            assertFalse{corr == -1}
+            contains[corr] = corr
+        }
+        // missing ba
+        assertTrue{contains == (0 until accept.size).toList()}
+    }
+
+    @Test
+    fun test1() {
+        val src = """
+            const GLOBAL_0 = 0i;
+            @compute
+            @workgroup_size(1)
+            fn computeMain() {
+                let c : i32 = 1;
+                let d : i32 = 2 + GLOBAL_0;
+                var e : i32 = d;
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = singleReplacementSkeletons(tu, env).toList()
+    }
+
 }

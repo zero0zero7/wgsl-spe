@@ -23,9 +23,8 @@ package com.wgslfuzz.core
 data class SkeletalCandidate(val identifier: AstNode, val type: Type, val scope: Scope)
 
 /**
- * Returns all non-trivial [Expression] nodes in [tu] as [SkeletalCandidate]s, each capturing the
- * expression, its concrete type, and the scope visible at that expression. Literals are excluded
- * (they are already maximally simple).
+ * Returns all variables declaration nodes and usage nodes in [tu] as [SkeletalCandidate]s, each capturing the
+ * expression, its concrete type, and the scope visible at that expression.
  */
 fun collectSkeletalCandidates(
     tu: TranslationUnit,
@@ -87,6 +86,9 @@ private fun collectCandidatesFromNode(
                 helper(node, node.typeDecl!!.toType(scope, env), scope, true)
             }
         }
+        is Statement.Value -> {
+            helper(node, env.typeOf(node.initializer), true)
+        }
         is Statement.Variable -> {
             val init: Expression? = node.initializer
             if (init != null) {
@@ -139,9 +141,10 @@ fun singleReplacementSkeletons(
     env: ResolvedEnvironment,
 ): Sequence<TranslationUnit> = sequence {
     val (decl, usage) = collectSkeletalCandidates(tu, env)
+    print(decl.size)
+    print(usage.size)
     for ((id, concreteType, scope) in usage) {
         for (varName in variablesOfType(scope, concreteType)) {
-//            val replacement = Expression.Identifier(varName)
             val replacement = id.cloneWithName(varName)
             yield(tu.clone { node -> if (node === id) replacement else null })
         }
