@@ -23,15 +23,16 @@ import com.wgslfuzz.core.collectSkeletalCandidates
 import com.wgslfuzz.core.singleReplacementSkeletons
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
+import kotlinx.cli.default
 import kotlinx.cli.required
 import kotlinx.serialization.json.Json
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.PrintStream
 import kotlin.system.exitProcess
+import java.io.FileOutputStream
 
 fun main(args: Array<String>) {
-    val parser = ArgParser("wgsl-fuzz skeletal program enumerator")
+    val parser = ArgParser("wgsl skeletal program enumerator")
 
     val shaderPath by parser
         .option(
@@ -47,7 +48,17 @@ fun main(args: Array<String>) {
             description = "Maximum number of skeletons to print (default: all)",
         )
 
+    val outputDir by parser
+        .option(
+            ArgType.String,
+            fullName = "output-dir",
+            description = "Directory to write each skeleton as a numbered .wgsl file (optional)",
+        ).default("out")
     parser.parse(args)
+
+    val shaderName = File(shaderPath).nameWithoutExtension
+    val outDir = File(outputDir, shaderName)
+    outDir.mkdirs()
 
     val shaderFile = File(shaderPath)
     if (!shaderFile.exists()) {
@@ -77,9 +88,8 @@ fun main(args: Array<String>) {
         val (replacedExpr, concreteType) = usages[index]
         println("// --- Skeleton ${index + 1} / ${usages.size} ---")
         println("// Replaced: ${replacedExpr::class.simpleName} (type: $concreteType)")
-        val baos = ByteArrayOutputStream()
-        AstWriter(out = PrintStream(baos)).emit(skeleton)
-        println(baos.toString())
+        val fileName = "skeleton_%03d.wgsl".format(index)
+        AstWriter(out = PrintStream(FileOutputStream(File(outDir, fileName)))).emit(skeleton)
         index++
     }
 }
