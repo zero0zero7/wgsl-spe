@@ -240,7 +240,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
         // Replacement -- return a;
         val identifierExpression =
             ((tu.globalDecls[0] as GlobalDecl.Function).body.statements[1] as Statement.Return).expression
@@ -273,7 +273,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
         // Replacements
         // -- global_constant + 1;
         // -- return global_constant;
@@ -319,7 +319,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
         assertTrue(skeletons.isNotEmpty())
 
         // Replacements
@@ -345,7 +345,6 @@ class SkeletalEnumeratorTests {
             assertFalse{corr == -1}
             contains[corr] = corr
         }
-        // missing ba
         assertTrue{contains == (0 until accept.size).toList()}
     }
 

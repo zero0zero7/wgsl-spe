@@ -229,6 +229,7 @@ fun singleReplacementSkeletons(
     print(decl.size)
     print(usage.size)
     for ((id, concreteType, scope) in usage) {
+        print(variablesOfType(scope, concreteType))
         for (varName in variablesOfType(scope, concreteType)) {
             val replacement = id.cloneWithName(varName)
             yield(tu.clone { node -> if (node === id) replacement else null })
