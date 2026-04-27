@@ -1,19 +1,3 @@
-/*
- * Copyright 2025 The wgsl-fuzz Project Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.wgslfuzz.tools
 
 import com.wgslfuzz.core.AstWriter
@@ -92,8 +76,10 @@ fun main(args: Array<String>) {
     if (usages.isNotEmpty()) {
         val skeletons = allReplacementSkeletons(tu, env, maxReplacements)
         val maxSkeletons = limit ?: Int.MAX_VALUE
-        for ((idx, skeleton) in skeletons.take(maxSkeletons).withIndex()) {
+        for ((idx, skeleton_charVect) in skeletons.take(maxSkeletons).withIndex()) {
+            val (skeleton, charVect) = skeleton_charVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
+            println("$fileName, $charVect")
             AstWriter(out = PrintStream(FileOutputStream(File(outDir, fileName)))).emit(skeleton)
         }
     }

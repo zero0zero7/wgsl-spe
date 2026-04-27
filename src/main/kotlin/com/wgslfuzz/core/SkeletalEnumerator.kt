@@ -1,19 +1,3 @@
-/*
- * Copyright 2025 The wgsl-fuzz Project Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.wgslfuzz.core
 
 /**
@@ -227,46 +211,57 @@ fun allReplacementSkeletons(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
     maxReplacements: Int = Int.MAX_VALUE,
-): Sequence<TranslationUnit> {
+): Sequence<Pair<TranslationUnit, List<String>>> {
     val (_, usages) = collectSkeletalCandidates(tu, env)
     if (usages.isEmpty()) return emptySequence()
+
     val choices: List<List<Pair<AstNode, AstNode>>> = usages
         .map { (node, concreteType, scope) ->
             variablesOfType(scope, concreteType).map { varName -> node to node.cloneWithName(varName) }
         }
         .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
     val tmp = choices.map { it.size }.reduce(Int::times)
-    return enumerateCombinations(choices).take(minOf(maxReplacements, tmp)).map { combination ->
+    return enumerateCombinations(choices).take(minOf(maxReplacements, tmp)).map { (combination, charVect) ->
         val replacementMap = combination.toMap()
-        tu.clone { node -> replacementMap[node] }
+        Pair(tu.clone { node -> replacementMap[node] }, charVect)
     }
 }
 
-/*
-In each combination, yield 1 replacement for each usage.
-Returns a sequence of combinations
+/**
+ * Yields one replacement per usage across all combinations.
+ *
+ * @return a sequence of combinations, where each combination is a pair of:
+ *   - a list of (original, replacement) node pairs for one skeleton
+ *   - a characteristic vector of usage nodes represented as a list of Strings for the skeleton given the chosen replacements
  */
 private fun enumerateCombinations(
     choices: List<List<Pair<AstNode, AstNode>>>,
-//    maxSize: Int,
-): Sequence<List<Pair<AstNode, AstNode>>> {
+): Sequence<Pair<List<Pair<AstNode, AstNode>>, List<String>>> {
 
     var combi_count: Int = 0
 
     fun enumerateCombinationsFrom(
         usageIdx: Int,
         combi: List<Pair<AstNode, AstNode>>,
-    ): Sequence<List<Pair<AstNode, AstNode>>> = sequence {
+        charVect : MutableList<String>
+    ): Sequence<Pair<List<Pair<AstNode, AstNode>>, List<String>>> = sequence {
         // Yield full combi
         if (usageIdx == choices.size) {
-            yield(combi)
+            yield(Pair(combi, charVect.toList())) // .toList() is required so that a copy of the current state of charVect is returned, else, it would be overwritten in future iterations (combinations). If .toList() instead of .take() is used to extract the pairs returned by enumerateCombinations(), charVect for all combinations would be the same despite the TU being diverse
             combi_count++
             return@sequence
         }
         for (option in choices[usageIdx]) { // option is the Pair<usageNode, replacementNode>
-            yieldAll(enumerateCombinationsFrom(usageIdx + 1, combi + option))
+            val replacement = option.second
+            when (replacement) {
+                is LhsExpression.Identifier -> charVect[usageIdx] = replacement.name
+                is Expression.Identifier -> charVect[usageIdx] = replacement.name
+                else -> throw IllegalStateException("Unexpected. Replacement should be LhsExpr.Id or Expr.Id, not $replacement")
+            }
+
+            yieldAll(enumerateCombinationsFrom(usageIdx + 1, combi + option, charVect))
         }
     }
 
-    return enumerateCombinationsFrom(0, emptyList())
+    return enumerateCombinationsFrom(0, emptyList(), MutableList(choices.size){""})
 }
