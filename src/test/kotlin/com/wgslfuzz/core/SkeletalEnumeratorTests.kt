@@ -1,19 +1,3 @@
-/*
- * Copyright 2025 The wgsl-fuzz Project Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.wgslfuzz.core
 
 import com.wgslfuzz.tools.dumpAst
@@ -143,7 +127,7 @@ class SkeletalEnumeratorTests {
         val candidates = collectSkeletalCandidates(tu, env)
         val skeletons = allReplacementSkeletons(tu, env).toList()
         assertEquals(1, skeletons.size, "Expected only the original source Tu")
-        assertTrue { equalTu(skeletons[0], listOf(tu)) == 0 }
+        assertTrue { equalTu(skeletons[0].first, listOf(tu)) == 0 }
     }
 
     // -------------------------------------------------------------------------
@@ -160,7 +144,8 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        for (skeleton in allReplacementSkeletons(tu, env)) {
+        for ((skeleton, charVect) in allReplacementSkeletons(tu, env)) {
+            println(charVect)
             val baos = ByteArrayOutputStream()
             AstWriter(out = PrintStream(baos)).emit(skeleton)
             val text = baos.toString()
@@ -226,7 +211,8 @@ class SkeletalEnumeratorTests {
 
         var accept = listOf(tu, expect_tu)
         val contains = MutableList(accept.size) {-1}
-        for (skeleton in skeletons) {
+        for ((skeleton, charVect) in skeletons) {
+            println(charVect)
             var corr = equalTu(skeleton, accept)
             assertFalse{corr == -1}
             contains[corr] = corr
@@ -271,7 +257,8 @@ class SkeletalEnumeratorTests {
 
         var accept = listOf(tu, expect1, expect2, expect3, expect4, expect5)
         val contains = MutableList(accept.size) {-1}
-        for (skeleton in skeletons) {
+        for ((skeleton, charVect) in skeletons) {
+            println(charVect)
             var corr = equalTu(skeleton, accept)
             assertFalse{corr == -1}
             contains[corr] = corr
@@ -313,7 +300,8 @@ class SkeletalEnumeratorTests {
 
         var accept = listOf(tu, expect1, expect2, expect3)
         val contains = MutableList(accept.size) {-1}
-        for (skeleton in skeletons) {
+        for ((skeleton, charVect) in skeletons) {
+            println(charVect)
             var corr = equalTu(skeleton, accept)
             assertFalse{corr == -1}
             contains[corr] = corr
