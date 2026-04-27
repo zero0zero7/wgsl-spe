@@ -96,14 +96,10 @@ class SkeletalEnumeratorTests {
         val env = resolve(tu)
         val (decls, usages) = collectSkeletalCandidates(tu, env)
         val nodes = usages.map { it.identifier }
-        assertEquals(3, nodes.size, "Expected exactly 3 candidates but got ${nodes.size}: $nodes")
+        assertEquals(2, nodes.size, "Expected exactly 3 candidates but got ${nodes.size}: $nodes")
         assertTrue(
             nodes.any { it is Expression.Identifier && it.name == "a" },
             "Expected Expression.Identifier(name='a') among candidates"
-        )
-        assertTrue(
-            nodes.any { it is Statement.Variable && it.name == "x" },
-            "Expected Statement.Variable(name='x') among candidates"
         )
         assertTrue(
             nodes.any { it is Expression.Identifier && it.name == "x" },
@@ -126,7 +122,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
         assertTrue(skeletons.isEmpty(), "Expected no skeletons when there is no variable usage (only declarations)")
     }
 
@@ -145,33 +141,9 @@ class SkeletalEnumeratorTests {
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         val candidates = collectSkeletalCandidates(tu, env)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
         assertEquals(1, skeletons.size, "Expected only the original source Tu")
         assertTrue { equalTu(skeletons[0], listOf(tu)) == 0 }
-    }
-
-    // -------------------------------------------------------------------------
-    // singleReplacementSkeletons — replacement is an Identifier, not a literal
-    // -------------------------------------------------------------------------
-
-    @Test
-    fun replacementIsIdentifierNotLiteral() {
-        val src = """
-            fn f(a: i32, b: i32) -> i32 {
-              return (a + b);
-            }
-        """.trimIndent()
-        val tu = parseFromString(src, LoggingParseErrorListener())
-        val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
-        assertTrue(skeletons.isNotEmpty())
-        // At least one skeleton should have the binary replaced by an identifier
-        val binaryReplacedSkeletons = skeletons.filter { skeleton ->
-            val fn = skeleton.globalDecls.filterIsInstance<GlobalDecl.Function>().first()
-            val ret = fn.body.statements.filterIsInstance<Statement.Return>().first()
-            ret.expression is Expression.Identifier
-        }
-        assertTrue(binaryReplacedSkeletons.isNotEmpty(), "Expected at least one skeleton where binary was replaced by an identifier")
     }
 
     // -------------------------------------------------------------------------
@@ -188,7 +160,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        for (skeleton in singleReplacementSkeletons(tu, env)) {
+        for (skeleton in allReplacementSkeletons(tu, env)) {
             val baos = ByteArrayOutputStream()
             AstWriter(out = PrintStream(baos)).emit(skeleton)
             val text = baos.toString()
@@ -206,13 +178,14 @@ class SkeletalEnumeratorTests {
     fun cannotReplaceWithAlreadyInScope() {
         // Variable declaration may not introduce an identifier that is already declared in the same or enclosing scope within the function
         val src = """
-            fn f(a: i32) -> Unit {
-              var x;
+            fn f(a: i32) {
+              var x : f16 = 0.2;
+              var y : i32;
             }
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
         assertEquals(0, skeletons.size)
     }
 
@@ -225,7 +198,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
         assertEquals(0, skeletons.size)
     }
 

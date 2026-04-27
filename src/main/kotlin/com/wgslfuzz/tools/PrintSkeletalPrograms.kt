@@ -89,10 +89,15 @@ fun main(args: Array<String>) {
     println("// Input: $shaderPath")
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
-    val skeletons = allReplacementSkeletons(tu, env, maxReplacements)
-    val maxSkeletons = limit ?: Int.MAX_VALUE
-    for ((idx, skeleton) in skeletons.take(maxSkeletons).withIndex()) {
-        val fileName = "skeleton_%03d.wgsl".format(idx)
-        AstWriter(out = PrintStream(FileOutputStream(File(outDir, fileName)))).emit(skeleton)
+    if (usages.isNotEmpty()) {
+        val skeletons = allReplacementSkeletons(tu, env, maxReplacements)
+        val maxSkeletons = limit ?: Int.MAX_VALUE
+        for ((idx, skeleton) in skeletons.take(maxSkeletons).withIndex()) {
+            val fileName = "skeleton_%03d.wgsl".format(idx)
+            AstWriter(out = PrintStream(FileOutputStream(File(outDir, fileName)))).emit(skeleton)
+        }
+    }
+    else {
+        println("No usages found")
     }
 }
