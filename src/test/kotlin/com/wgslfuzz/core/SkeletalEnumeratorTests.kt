@@ -351,18 +351,29 @@ class SkeletalEnumeratorTests {
     @Test
     fun test1() {
         val src = """
-            const GLOBAL_0 = 0i;
-            @compute
-            @workgroup_size(1)
+//            const GLOBAL_0 = 0i;
+//            @compute
+//            @workgroup_size(1)
+//            fn computeMain() {
+//                let c : i32 = 1;
+//                let d : i32 = 2 + GLOBAL_0;
+//                var e : i32 = d;
+//            }
             fn computeMain() {
-                let c : i32 = 1;
-                let d : i32 = 2 + GLOBAL_0;
-                var e : i32 = d;
+              var a : i32 = 1;
+              var b : i32 = 2;
+              if (a == 1) {
+                var c: i32 = 3;
+                var d: i32 = 5;
+                b = c + d;
+              }
+              var x = 1 + a;
+              var y = 1 + b;
             }
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = singleReplacementSkeletons(tu, env).toList()
+        val skeletons = allReplacementSkeletons(tu, env).toList()
     }
 
 }
