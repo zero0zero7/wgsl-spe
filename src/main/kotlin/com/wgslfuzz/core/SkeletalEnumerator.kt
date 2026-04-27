@@ -216,28 +216,6 @@ private fun variablesOfType(
 }
 
 /**
- * Lazily enumerates all single-expression skeletal variants of [tu].
- * Each emitted [TranslationUnit] is identical to [tu] except that exactly one candidate
- * expression has been replaced by a reference to an in-scope variable of the same type.
- * Candidates for which no matching variable exists in scope are skipped.
- */
-fun singleReplacementSkeletons(
-    tu: TranslationUnit,
-    env: ResolvedEnvironment,
-): Sequence<TranslationUnit> = sequence {
-    val (decl, usage) = collectSkeletalCandidates(tu, env)
-    print(decl.size)
-    print(usage.size)
-    for ((id, concreteType, scope) in usage) {
-        print(variablesOfType(scope, concreteType))
-        for (varName in variablesOfType(scope, concreteType)) {
-            val replacement = id.cloneWithName(varName)
-            yield(tu.clone { node -> if (node === id) replacement else null })
-        }
-    }
-}
-
-/**
  * Lazily enumerates (hence Sequence over List) all skeletal variants of [tu] produced by simultaneously replacing between
  * 1 and [maxReplacements] candidate expressions with in-scope variables of matching type.
  *
@@ -251,13 +229,13 @@ fun allReplacementSkeletons(
     maxReplacements: Int = Int.MAX_VALUE,
 ): Sequence<TranslationUnit> {
     val (_, usages) = collectSkeletalCandidates(tu, env)
+    if (usages.isEmpty()) return emptySequence()
     val choices: List<List<Pair<AstNode, AstNode>>> = usages
         .map { (node, concreteType, scope) ->
             variablesOfType(scope, concreteType).map { varName -> node to node.cloneWithName(varName) }
         }
         .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
     val tmp = choices.map { it.size }.reduce(Int::times)
-    println(tmp)
     return enumerateCombinations(choices).take(minOf(maxReplacements, tmp)).map { combination ->
         val replacementMap = combination.toMap()
         tu.clone { node -> replacementMap[node] }
@@ -286,7 +264,6 @@ private fun enumerateCombinations(
             return@sequence
         }
         for (option in choices[usageIdx]) { // option is the Pair<usageNode, replacementNode>
-            println("$usageIdx, ${choices[usageIdx].size}, ${combi.size}, $combi_count")
             yieldAll(enumerateCombinationsFrom(usageIdx + 1, combi + option))
         }
     }
