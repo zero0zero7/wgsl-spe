@@ -53,7 +53,7 @@ fun main(args: Array<String>) {
             ArgType.Int,
             fullName = "max-replacements",
             description = "Maximum number of simultaneous replacements per skeleton (default: 1)",
-        ).default(1)
+        ).default(Int.MAX_VALUE)
 
     val outputDir by parser
         .option(

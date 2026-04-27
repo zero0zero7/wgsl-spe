@@ -102,7 +102,7 @@ private fun collectCandidatesFromNode(
 
         // Assignment statements: the write target is a DECL candidate; the rhs is USAGE.
         is Statement.Assignment -> {
-            node.lhsExpression?.let { recurse(it, NodeRole.DECL) }
+            node.lhsExpression?.let { recurse(it, NodeRole.USAGE) }
             recurse(node.rhs, NodeRole.USAGE)
         }
 //        is Statement.Increment -> recurse(node.target, NodeRole.DECL)
@@ -238,7 +238,7 @@ fun singleReplacementSkeletons(
 }
 
 /**
- * Lazily enumerates all skeletal variants of [tu] produced by simultaneously replacing between
+ * Lazily enumerates (hence Sequence over List) all skeletal variants of [tu] produced by simultaneously replacing between
  * 1 and [maxReplacements] candidate expressions with in-scope variables of matching type.
  *
  * For every non-empty subset of candidates (up to [maxReplacements] elements), and every
@@ -252,33 +252,44 @@ fun allReplacementSkeletons(
 ): Sequence<TranslationUnit> {
     val (_, usages) = collectSkeletalCandidates(tu, env)
     val choices: List<List<Pair<AstNode, AstNode>>> = usages
-        .map { (id, concreteType, scope) ->
-            variablesOfType(scope, concreteType).map { varName -> id to id.cloneWithName(varName) }
+        .map { (node, concreteType, scope) ->
+            variablesOfType(scope, concreteType).map { varName -> node to node.cloneWithName(varName) }
         }
-        .filter { it.isNotEmpty() }
-    return enumerateCombinations(choices, minOf(maxReplacements, choices.size)).map { combination ->
+        .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
+    val tmp = choices.map { it.size }.reduce(Int::times)
+    println(tmp)
+    return enumerateCombinations(choices).take(minOf(maxReplacements, tmp)).map { combination ->
         val replacementMap = combination.toMap()
         tu.clone { node -> replacementMap[node] }
     }
 }
 
+/*
+In each combination, yield 1 replacement for each usage.
+Returns a sequence of combinations
+ */
 private fun enumerateCombinations(
     choices: List<List<Pair<AstNode, AstNode>>>,
-    maxSize: Int,
-): Sequence<List<Pair<AstNode, AstNode>>> =
-    enumerateCombinationsFrom(choices, 0, maxSize, emptyList())
+//    maxSize: Int,
+): Sequence<List<Pair<AstNode, AstNode>>> {
 
-private fun enumerateCombinationsFrom(
-    choices: List<List<Pair<AstNode, AstNode>>>,
-    fromIndex: Int,
-    remainingSlots: Int,
-    current: List<Pair<AstNode, AstNode>>,
-): Sequence<List<Pair<AstNode, AstNode>>> = sequence {
-    if (current.isNotEmpty()) yield(current)
-    if (remainingSlots == 0) return@sequence
-    for (i in fromIndex until choices.size) {
-        for (option in choices[i]) {
-            yieldAll(enumerateCombinationsFrom(choices, i + 1, remainingSlots - 1, current + option))
+    var combi_count: Int = 0
+
+    fun enumerateCombinationsFrom(
+        usageIdx: Int,
+        combi: List<Pair<AstNode, AstNode>>,
+    ): Sequence<List<Pair<AstNode, AstNode>>> = sequence {
+        // Yield full combi
+        if (usageIdx == choices.size) {
+            yield(combi)
+            combi_count++
+            return@sequence
+        }
+        for (option in choices[usageIdx]) { // option is the Pair<usageNode, replacementNode>
+            println("$usageIdx, ${choices[usageIdx].size}, ${combi.size}, $combi_count")
+            yieldAll(enumerateCombinationsFrom(usageIdx + 1, combi + option))
         }
     }
+
+    return enumerateCombinationsFrom(0, emptyList())
 }
