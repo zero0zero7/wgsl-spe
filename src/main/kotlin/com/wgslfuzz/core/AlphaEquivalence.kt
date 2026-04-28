@@ -5,11 +5,18 @@ package com.wgslfuzz.core
 /**
  * Parses an AstNode to return a characteristic vector
  */
+private fun characteristicVectorFromTU(
+    node: AstNode
+): List<String> {
+    val variables = mutableListOf<String>()
+    traverse(::characteristicVectorFromAstnode, node, variables)
+    return variables
+}
+
 private fun characteristicVectorFromAstnode(
     node: AstNode,
     variableNames: MutableList<String>,
-): List<String> {
-
+) {
     fun addVariableName(name: String) = variableNames.add(name)
 
     when (node) {
@@ -48,7 +55,6 @@ private fun characteristicVectorFromAstnode(
 
         is Expression.Paren -> characteristicVectorFromAstnode(node.target, variableNames)
         is Expression.Unary -> characteristicVectorFromAstnode(node.target, variableNames)
-         is LhsExpression.Paren -> characteristicVectorFromAstnode(node.target, variableNames )
 
         is Expression.Binary -> {
             characteristicVectorFromAstnode(node.lhs, variableNames)
@@ -189,11 +195,16 @@ private fun characteristicVectorFromAstnode(
         // Statement: Empty, Break, Continue, Discard
         else -> {}
     }
-    traverse(::characteristicVectorFromAstnode, node, variableNames)
-    return variableNames
 }
 
 // TODO: this wouldnt work for more than 10 variables as 2 same restrict growth strings can have different variable allocation. eg. 0112 could be 0.11.2 or 0.1.12
+fun restrictGrowthStr(
+    tu: TranslationUnit
+) : String {
+    val charVect = characteristicVectorFromTU(tu)
+    return restrictGrowthStr(charVect)
+}
+
 fun restrictGrowthStr(
     charVect: List<String>
 ) : String {
@@ -205,5 +216,34 @@ fun restrictGrowthStr(
         result.append(temp)
     }
     return result.toString()
+}
+
+fun scanDirectoryRGSStats(
+    pathName: String,
+) {
+    val dir = java.io.File(pathName)
+    val files = dir.listFiles { f -> f.extension == "wgsl" }?.sortedBy { it.name } ?: emptyList()
+
+    val rgsToFiles = mutableMapOf<String, MutableList<String>>()
+    for (file in files) {
+        val tu = parseFromFile(file.absolutePath, LoggingParseErrorListener())
+        val rgs = restrictGrowthStr(tu)
+        rgsToFiles.getOrPut(rgs) { mutableListOf() }.add(file.name)
+    }
+
+    val total = files.size
+    val distinctRgs = rgsToFiles.size
+    val duplicateGroups = rgsToFiles.filter { it.value.size > 1 }
+    val duplicateFileCount = duplicateGroups.values.sumOf { it.size }
+
+    println("Total files: $total")
+    println("Distinct RGS values: $distinctRgs")
+    println("Files sharing an RGS with another: $duplicateFileCount")
+    println("\nRGS -> file count (groups with duplicates):")
+    duplicateGroups.entries.sortedByDescending { it.value.size }.forEach { (rgs, names) ->
+        println("  \"$rgs\" -> ${names.size} files: ${names.take(5)}${if (names.size > 5) " ..." else ""}")
+    }
+    println("\nAll distinct RGS values:")
+    rgsToFiles.keys.sorted().forEach { println("  \"$it\"") }
 }
 
