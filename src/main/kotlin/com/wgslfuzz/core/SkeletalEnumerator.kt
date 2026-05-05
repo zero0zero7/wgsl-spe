@@ -89,8 +89,8 @@ private fun collectCandidatesFromNode(
             node.lhsExpression?.let { recurse(it, NodeRole.USAGE) }
             recurse(node.rhs, NodeRole.USAGE)
         }
-//        is Statement.Increment -> recurse(node.target, NodeRole.DECL)
-//        is Statement.Decrement -> recurse(node.target, NodeRole.DECL)
+        is Statement.Increment -> recurse(node.target, NodeRole.USAGE)
+        is Statement.Decrement -> recurse(node.target, NodeRole.USAGE)
 
         // LhsExpression wrappers: propagate the incoming role to the inner target so that
         // the leaf LhsExpression.Identifier ends up with the correct DECL/USAGE classification.
@@ -168,12 +168,12 @@ private fun collectCandidatesFromNode(
         // themselves DECL candidates.
         is GlobalDecl.Function -> recurse(node.body, NodeRole.NONE)
         is GlobalDecl.Override -> node.initializer?.let { recurse(it, NodeRole.USAGE) }
-//        is GlobalDecl.ConstAssert -> recurse(node.expression, NodeRole.USAGE)
+        is GlobalDecl.ConstAssert -> recurse(node.expression, NodeRole.USAGE)
         is GlobalDecl.Struct, is GlobalDecl.TypeAlias, is GlobalDecl.Empty -> {}
 
         is TranslationUnit -> node.globalDecls.forEach { recurse(it, NodeRole.NONE) }
 
-        // TypeDecl nodes and anything else: no candidates to collect.
+        // All Attribute, All TypeDecl, Directive, ParameterDecl, StructMember
         else -> {}
     }
 }
