@@ -146,3 +146,9 @@ tasks.register<JavaExec>("printSkeletalPrograms") {
     classpath = sourceSets["main"].runtimeClasspath
     jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
 }
+
+tasks.register<JavaExec>("checkCompilable") {
+    mainClass.set("com.wgslfuzz.tools.CheckCompilable")
+    classpath = sourceSets["main"].runtimeClasspath
+    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
+}

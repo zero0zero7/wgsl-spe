@@ -20,25 +20,19 @@ private fun characteristicVectorFromAstnode(
     fun addVariableName(name: String) = variableNames.add(name)
 
     when (node) {
-        // Attributes
-//        is Attribute.Align -> characteristicVectorFromAstnode(node.expression, variableNames)
-//        is Attribute.Binding -> characteristicVectorFromAstnode(node.expression, variableNames)        is Attribute.Align -> characteristicVectorFromAstnode(node.expression, variableNames)
-//        is Attribute.BlendSrc -> characteristicVectorFromAstnode(node.expression, variableNames)
-//        is Attribute.Builtin -> addVariableName(node.name)
-//        is Attribute.Group -> characteristicVectorFromAstnode(node.expression, variableNames)
-//        is Attribute.Location -> characteristicVectorFromAstnode(node.expression, variableNames)
-//        is Attribute.Size -> characteristicVectorFromAstnode(node.expression, variableNames)
-//        is Attribute.WorkgroupSize -> {
-//            characteristicVectorFromAstnode(node.sizeX, variableNames)
-//            node.sizeY?.let {characteristicVectorFromAstnode(node.sizeY, variableNames)}
-//            node.sizeZ?.let {characteristicVectorFromAstnode(node.sizeZ, variableNames)}
-//        }
-//        is Attribute.InputAttachmentIndex -> characteristicVectorFromAstnode(node.expression, variableNames)
-
         // GlobalDecl
-        is GlobalDecl.Constant -> addVariableName(node.name)
-//        is GlobalDecl.Override -> addVariableName(node.name)
-        is GlobalDecl.Variable -> addVariableName(node.name)
+        is GlobalDecl.Constant -> {
+            addVariableName(node.name)
+            node.initializer?.let{ characteristicVectorFromAstnode(it, variableNames) }
+        }
+        is GlobalDecl.Override -> {
+            addVariableName(node.name)
+            node.initializer?.let{ characteristicVectorFromAstnode(it, variableNames) }
+        }
+        is GlobalDecl.Variable -> {
+            addVariableName(node.name)
+            node.initializer?.let{ characteristicVectorFromAstnode(it, variableNames) }
+        }
         is GlobalDecl.Function -> {
             for (param in node.parameters) {
                 characteristicVectorFromAstnode(param, variableNames)
@@ -48,7 +42,7 @@ private fun characteristicVectorFromAstnode(
             }
             characteristicVectorFromAstnode(node.body, variableNames)
         }
-//        is GlobalDecl.ConstAssert -> characteristicVectorFromAstnode(node.expression, variableNames)
+        is GlobalDecl.ConstAssert -> characteristicVectorFromAstnode(node.expression, variableNames)
 
         // Expression
         is Expression.Identifier -> addVariableName(node.name)
@@ -61,7 +55,7 @@ private fun characteristicVectorFromAstnode(
             characteristicVectorFromAstnode(node.rhs, variableNames)
         }
 
-        is Expression.FunctionCall -> node.args.forEach { characteristicVectorFromAstnode(it, variableNames) }
+        is Expression.FunctionCall -> node.args.forEach { characteristicVectorFromAstnode(it, variableNames) } // TODO: function call enumeration
         is Expression.ValueConstructor -> {
             if (node is Expression.ArrayValueConstructor) {
                 node.elementCount?.let { characteristicVectorFromAstnode(node.elementCount, variableNames) }
@@ -156,7 +150,7 @@ private fun characteristicVectorFromAstnode(
                 it,
                 variableNames
             )
-        } // TODO: is callee function name, or variable name. x.add?
+        } // TODO: callee = callee function name
         is Statement.Value -> {
             addVariableName(node.name)
             characteristicVectorFromAstnode(node.initializer, variableNames)
@@ -182,12 +176,13 @@ private fun characteristicVectorFromAstnode(
             node.attributes.forEach { characteristicVectorFromAstnode(it, variableNames) }
             addVariableName(node.name)
         }
-        is StructMember -> {
-            node.attributes.forEach { characteristicVectorFromAstnode(it, variableNames) }
-            addVariableName(node.name)
-        }
 
-        // Attribute: Compute, Const, Diagnostic, Fragment, Interpolate, Invariant, MustUse, Vertex
+//        is StructMember -> {
+//            node.attributes.forEach { characteristicVectorFromAstnode(it, variableNames) }
+//            addVariableName(node.name)
+//        }
+
+        // Attribute (all)
         // Directive
         // GlobalDecl: Struct, TypeAlias, Empty
         // TypeDecl (all)

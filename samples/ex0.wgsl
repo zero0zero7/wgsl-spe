@@ -1,4 +1,3 @@
-
 const GLOBAL_0 = 0i;
 
 @compute
