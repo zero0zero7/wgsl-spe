@@ -20,6 +20,7 @@ add_executable(dawn_harness dawn_harness.cpp)
 target_include_directories(dawn_harness PRIVATE
     ${DAWN_SRC_DIR}/include
     ${DAWN_GEN_INCLUDE_DIR}
+    ${DAWN_SRC_DIR}/third_party/swiftshader/third_party/json/include
 )
 
 target_link_directories(dawn_harness PRIVATE
