@@ -142,13 +142,18 @@ tasks.register<JavaExec>("dumpAst") {
 }
 
 tasks.register<JavaExec>("printSkeletalPrograms") {
-    mainClass.set("com.wgslfuzz.tools.PrintSkeletalProgramsKt")
+    mainClass.set("com.wgslspe.tools.PrintSkeletalProgramsKt")
+    classpath = sourceSets["main"].runtimeClasspath
+}
+
+tasks.register<JavaExec>("checkCompilable") {
+    mainClass.set("com.wgslspe.tools.CheckCompilableKt")
     classpath = sourceSets["main"].runtimeClasspath
     jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
 }
 
-tasks.register<JavaExec>("checkCompilable") {
-    mainClass.set("com.wgslfuzz.tools.CheckCompilable")
+tasks.register<JavaExec>("runShader") {
+    mainClass.set("com.wgslspe.tools.RunShaderKt")
     classpath = sourceSets["main"].runtimeClasspath
-    jvmArgs("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005")
+    jvmArgs("-Djava.library.path=src/main/cpp/build")
 }
