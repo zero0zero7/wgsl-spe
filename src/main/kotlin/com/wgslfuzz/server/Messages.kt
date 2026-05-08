@@ -18,14 +18,14 @@ package com.wgslfuzz.server
 
 import com.fasterxml.jackson.annotation.JsonSubTypes
 import com.fasterxml.jackson.annotation.JsonTypeInfo
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 
 /**
  * Information needed to render using a shader
  */
 data class ShaderJob(
     val shaderText: String,
-    val uniformBuffers: List<UniformBufferInfoByteLevel>,
+    val uniformBuffers: List<BufferInfo>,
 )
 
 /**

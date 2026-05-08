@@ -1,6 +1,6 @@
 package com.wgslspe.tools
 
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 import com.wgslspe.core.BufferResult
 import com.wgslspe.core.DawnHarness
 import com.wgslfuzz.core.createShaderJob
@@ -36,12 +36,15 @@ fun main(args: Array<String>) {
     val resolvedUniformsPath = uniformsPath
         ?: shaderPath.removeSuffix(".wgsl") + ".uniforms.json"
 
-    val uniformBuffers: List<UniformBufferInfoByteLevel> =
+    val uniformBuffers: List<BufferInfo> =
         File(resolvedUniformsPath).takeIf { it.exists() }
             ?.let { Json.decodeFromString(it.readText()) }
             ?: emptyList()
 
     val shaderJob = createShaderJob(shaderFile.readText(), uniformBuffers)
+
+    // Include access mode for each buffer
+
     val results: List<BufferResult> = DawnHarness.execute(shaderJob)
 
     println(Json { prettyPrint = true }.encodeToString(results))

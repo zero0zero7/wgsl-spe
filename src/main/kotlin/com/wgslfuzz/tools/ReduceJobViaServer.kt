@@ -233,7 +233,7 @@ private fun isInteresting(
     File(
         reductionWorkDir,
         jobFilename.removeSuffix(".wgsl") + ".uniforms.json",
-    ).writeText(prettyJson.encodeToString(shaderJob.getByteLevelContentsForUniformBuffers()))
+    ).writeText(prettyJson.encodeToString(shaderJob.getByteLevelContentsForBuffers()))
     File(
         reductionWorkDir,
         jobFilename.removeSuffix(".wgsl") + ".shaderjob.json",

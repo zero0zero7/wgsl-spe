@@ -1,7 +1,8 @@
 package com.wgslspe.tools
 
+import com.wgslfuzz.core.AccessMode
 import com.wgslfuzz.core.AstWriter
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.BufferResult
 import com.wgslspe.core.DawnHarness
@@ -11,11 +12,20 @@ import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
 import kotlinx.cli.required
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.PrintStream
 import kotlin.system.exitProcess
 import java.io.FileOutputStream
+import java.io.Serial
+
+
+@Serializable
+data class UniformsFile(
+    val entryPoint: String,
+    val buffers: List<BufferInfo>,
+)
 
 fun main(args: Array<String>) {
     val parser = ArgParser("Pipeline to 1. Enumerate 2. Check compilable by Tint 3. Execute shader in Dawn")
@@ -61,9 +71,9 @@ fun main(args: Array<String>) {
     }
 
     val uniformsFile = File(shaderPath.removeSuffix(".wgsl") + ".uniforms.json")
-    val uniformBuffers: List<UniformBufferInfoByteLevel> =
+    val uniformBuffers: List<BufferInfo> =
         if (uniformsFile.exists()) {
-            Json.decodeFromString(uniformsFile.readText())
+            Json.decodeFromString<UniformsFile>(uniformsFile.readText()).buffers
         } else {
             emptyList()
         }
@@ -93,13 +103,8 @@ fun main(args: Array<String>) {
         val tintCompilable = isCompilable(skeletonFile.absolutePath)
         println(tintCompilable)
         // 3. Execute in Dawn
-        val resolvedUniformsPath = skeletonFile.nameWithoutExtension + "_cpp.uniforms.json"
-        val uniformBuffers: List<UniformBufferInfoByteLevel> =
-            File(resolvedUniformsPath).takeIf { it.exists() }
-                ?.let { Json.decodeFromString(it.readText()) }
-                ?: emptyList()
-        val shaderJob = createShaderJob(skeletonFile.readText(), uniformBuffers)
-        val results: List<BufferResult> = DawnHarness.execute(shaderJob)
+        val skeletonJob = createShaderJob(skeletonFile.readText(), uniformBuffers)
+        val results: List<BufferResult> = DawnHarness.execute(skeletonJob)
 //        println(Json { prettyPrint = true }.encodeToString(results))
         println(results.joinToString("\n"))
         skeletonFile.delete()

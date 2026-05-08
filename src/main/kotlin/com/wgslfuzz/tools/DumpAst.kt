@@ -26,7 +26,7 @@ import com.wgslfuzz.core.Statement
 import com.wgslfuzz.core.StructMember
 import com.wgslfuzz.core.TranslationUnit
 import com.wgslfuzz.core.TypeDecl
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.createShaderJob
 import com.wgslfuzz.core.traverse
 import kotlinx.cli.ArgParser
@@ -194,7 +194,7 @@ fun main(args: Array<String>) {
     }
 
     val uniformsFile = File(shaderPath.removeSuffix(".wgsl") + ".uniforms.json")
-    val uniformBuffers: List<UniformBufferInfoByteLevel> =
+    val uniformBuffers: List<BufferInfo> =
         if (uniformsFile.exists()) {
             Json.decodeFromString(uniformsFile.readText())
         } else {

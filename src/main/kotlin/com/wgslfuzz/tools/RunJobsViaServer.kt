@@ -20,7 +20,7 @@ import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.server.ClientToServer
 import com.wgslfuzz.server.ImageData
 import com.wgslfuzz.server.ServerToClient
@@ -190,7 +190,7 @@ fun runJobViaServer(
                 ShaderJob(
                     shaderText = job.readText(),
                     uniformBuffers =
-                        jacksonObjectMapper().readValue<List<UniformBufferInfoByteLevel>>(
+                        jacksonObjectMapper().readValue<List<BufferInfo>>(
                             File("${job.absolutePath.removeSuffix(".wgsl")}.uniforms.json").readText(),
                         ),
                 ),

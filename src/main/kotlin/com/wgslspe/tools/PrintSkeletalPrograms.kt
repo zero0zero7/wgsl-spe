@@ -1,7 +1,7 @@
 package com.wgslspe.tools
 
 import com.wgslfuzz.core.AstWriter
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.collectSkeletalCandidates
 import com.wgslspe.core.allReplacementSkeletons
@@ -58,7 +58,7 @@ fun main(args: Array<String>) {
     }
 
     val uniformsFile = File(shaderPath.removeSuffix(".wgsl") + ".uniforms.json")
-    val uniformBuffers: List<UniformBufferInfoByteLevel> =
+    val uniformBuffers: List<BufferInfo> =
         if (uniformsFile.exists()) {
             Json.decodeFromString(uniformsFile.readText())
         } else {

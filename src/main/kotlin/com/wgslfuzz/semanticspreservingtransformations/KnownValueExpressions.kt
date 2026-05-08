@@ -25,7 +25,7 @@ import com.wgslfuzz.core.ShaderJob
 import com.wgslfuzz.core.Type
 import com.wgslfuzz.core.UnaryOperator
 import com.wgslfuzz.core.clone
-import com.wgslfuzz.core.getUniformDeclaration
+import com.wgslfuzz.core.getBufferDeclaration
 import com.wgslfuzz.core.toType
 import kotlin.collections.setOf
 import kotlin.math.max
@@ -560,23 +560,23 @@ fun randomKnownScalarValueFromUniform(
 ): Pair<Expression, Type.Scalar> {
     val groups =
         shaderJob.pipelineState
-            .getUniformGroups()
+            .getBufferGroups()
             .toList()
             .sorted()
     val group = fuzzerSettings.randomElement(groups)
     val bindings =
         shaderJob.pipelineState
-            .getUniformBindingsForGroup(group)
+            .getBufferBindingsForGroup(group)
             .toList()
             .sorted()
     val binding = fuzzerSettings.randomElement(bindings)
-    val uniformDeclaration = shaderJob.tu.getUniformDeclaration(group, binding)
+    val uniformDeclaration = shaderJob.tu.getBufferDeclaration(group, binding)
 
     var currentType: Type =
         uniformDeclaration.typeDecl?.toType(shaderJob.environment.globalScope, shaderJob.environment)
             ?: throw IllegalStateException("Uniform should have type")
 
-    var currentValueExpr: Expression = shaderJob.pipelineState.getUniformValue(group, binding)
+    var currentValueExpr: Expression = shaderJob.pipelineState.getBufferValue(group, binding)
     var currentUniformExpr: Expression =
         Expression.Identifier(
             uniformDeclaration.name,

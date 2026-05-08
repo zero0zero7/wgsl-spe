@@ -17,7 +17,7 @@
 package com.wgslfuzz.tools
 
 import com.wgslfuzz.core.AstWriter
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.createShaderJob
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
@@ -59,7 +59,7 @@ fun main(args: Array<String>) {
     }
 
     val shaderText = File(originalShader).readText()
-    val uniformBuffers = Json.decodeFromString<List<UniformBufferInfoByteLevel>>(File(uniforms).readText())
+    val uniformBuffers = Json.decodeFromString<List<BufferInfo>>(File(uniforms).readText())
     val shaderJob = createShaderJob(shaderText, uniformBuffers)
 
     AstWriter(

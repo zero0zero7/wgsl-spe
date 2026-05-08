@@ -16,7 +16,7 @@ using json = nlohmann::json;
 
 // ── Buffer types ──────────────────────────────────────────────────────────────
 
-enum class BufferUsage { Uniform, StorageR, StorageRW };
+enum class BufferUsage { StorageW, StorageR, StorageRW };
 
 struct BufferData {
     uint32_t group, binding;
@@ -24,8 +24,7 @@ struct BufferData {
     std::vector<uint8_t> data;
 };
 
-// Parse [{group, binding, bufferType, data}] JSON produced by Kotlin.
-// bufferType is "uniform", "storage_r", or "storage_rw".
+// Parse [{group, binding, accessMode, data}] JSON produced by Kotlin.
 // data bytes are already sized correctly by Kotlin's bufferSizeInBytes().
 static std::vector<BufferData> parseBuffers(const std::string& buffersJson) {
     json j = json::parse(buffersJson);
@@ -34,10 +33,10 @@ static std::vector<BufferData> parseBuffers(const std::string& buffersJson) {
         BufferData bd;
         bd.group   = entry.at("group").get<uint32_t>();
         bd.binding = entry.at("binding").get<uint32_t>();
-        std::string bt = entry.at("bufferType").get<std::string>();
-        if (bt == "storage_rw")     bd.usage = BufferUsage::StorageRW;
-        else if (bt == "storage_r") bd.usage = BufferUsage::StorageR;
-        else                         bd.usage = BufferUsage::Uniform;
+        std::string bt = entry.at("accessMode").get<std::string>();
+        if (bt == "READ_WRITE") bd.usage = BufferUsage::StorageRW;
+        else if (bt == "READ") bd.usage = BufferUsage::StorageR;
+        else if (bt == "WRITE") bd.usage = BufferUsage::StorageW;
         for (int b : entry.at("data")) bd.data.push_back(static_cast<uint8_t>(b));
         result.push_back(std::move(bd));
     }
@@ -108,8 +107,8 @@ static json runCompute(wgpu::Device& device,
     for (const auto& bd : buffers) {
         wgpu::BufferUsage wgpuUsage{};
         switch (bd.usage) {
-            case BufferUsage::Uniform:
-                wgpuUsage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
+            case BufferUsage::StorageW:
+                wgpuUsage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
                 break;
             case BufferUsage::StorageR:
                 wgpuUsage = wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst;
@@ -259,7 +258,7 @@ Java_com_wgslspe_core_DawnHarness_executeShader(
 }
 
 // ── Standalone main (for debugging) ──────────────────────────────────────────
-// Expects uniforms JSON: {"entryPoint":"...", "buffers":[{group,binding,bufferType,data}]}
+// Expects uniforms JSON: {"entryPoint":"...", "buffers":[{group,binding,data,accessMode}]}
 
 int main(int argc, char* argv[]) {
     if (argc < 2 || argc > 4) {
