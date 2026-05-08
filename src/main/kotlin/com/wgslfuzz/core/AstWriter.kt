@@ -1113,7 +1113,7 @@ class AstWriter(
                     .expression as Expression.IntLiteral
             ).text.toInt()
         out.print("// Uniform value: ")
-        emit(shaderJob.pipelineState.getUniformValue(group, binding))
+        emit(shaderJob.pipelineState.getBufferValue(group, binding))
         out.println()
     }
 }

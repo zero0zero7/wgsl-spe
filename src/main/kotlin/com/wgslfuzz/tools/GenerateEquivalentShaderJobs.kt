@@ -19,7 +19,7 @@ package com.wgslfuzz.tools
 import com.wgslfuzz.core.AstWriter
 import com.wgslfuzz.core.GlobalDecl
 import com.wgslfuzz.core.ShaderJob
-import com.wgslfuzz.core.UniformBufferInfoByteLevel
+import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.createShaderJob
 import com.wgslfuzz.core.nodesPreOrder
 import com.wgslfuzz.semanticspreservingtransformations.DefaultFuzzerSettings
@@ -144,7 +144,7 @@ fun main(args: Array<String>) {
         File(
             outputDir,
             "variant$paddedNumber.uniforms.json",
-        ).writeText(prettyJson.encodeToString(transformedShaderJob.getByteLevelContentsForUniformBuffers()))
+        ).writeText(prettyJson.encodeToString(transformedShaderJob.getByteLevelContentsForBuffers()))
         File(outputDir, "variant$paddedNumber.shaderjob.json").writeText(Json.encodeToString(transformedShaderJob))
     }
 }
@@ -167,6 +167,6 @@ private fun getShaderJobFromFile(shaderFilePath: String): ShaderJob {
     }
 
     val shaderText = File(shaderFilePath).readText()
-    val uniformBuffers = Json.decodeFromString<List<UniformBufferInfoByteLevel>>(File(uniformsFilePath).readText())
+    val uniformBuffers = Json.decodeFromString<List<BufferInfo>>(File(uniformsFilePath).readText())
     return createShaderJob(shaderText, uniformBuffers)
 }

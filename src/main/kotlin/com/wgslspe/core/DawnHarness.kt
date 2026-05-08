@@ -42,14 +42,6 @@ fun bufferSizeInBytes(type: Type): Int =
 
 // ── Transfer types ────────────────────────────────────────────────────────────
 
-// Sent to C++: describes each buffer the shader needs, including its type and initial bytes.
-@Serializable
-data class BufferDescriptor(
-    val group: Int,
-    val binding: Int,
-    val bufferType: String, // "uniform", "storage_r", "storage_rw"
-    val data: List<Int>,    // raw bytes; size already correct per WGSL layout rules
-)
 
 // Returned from C++: the readback contents of each storage_rw buffer.
 @Serializable
@@ -95,9 +87,9 @@ fun TranslationUnit.getComputeEntryPoint(): String =
         .first { fn -> fn.attributes.any { it is Attribute.Compute } }
         .name
 
-fun ShaderJob.getBufferDescriptors(): List<BufferDescriptor> {
+fun ShaderJob.getBufferDescriptors(): List<BufferInfo> {
     // buffers extracted from AST
-    val uniformData = getByteLevelContentsForUniformBuffers()
+    val bufferData = getByteLevelContentsForBuffers()
         .associateBy { it.group to it.binding }
     // buffers defined in .wgsl -- map to buffer in uniforms.json if group and binding matches, else add new entry
     return tu.globalDecls
@@ -110,19 +102,19 @@ fun ShaderJob.getBufferDescriptors(): List<BufferDescriptor> {
             val group = (v.attributes.filterIsInstance<Attribute.Group>().first().expression as Expression.IntLiteral).text.toInt()
             val binding = (v.attributes.filterIsInstance<Attribute.Binding>().first().expression as Expression.IntLiteral).text.toInt()
             val bufferType = when {
-                v.addressSpace == AddressSpace.STORAGE && v.accessMode == AccessMode.READ_WRITE -> "storage_rw"
-                v.addressSpace == AddressSpace.STORAGE -> "storage_r"
-                v.addressSpace == AddressSpace.UNIFORM -> "uniform"
+                v.addressSpace == AddressSpace.STORAGE && v.accessMode == AccessMode.READ_WRITE -> AccessMode.READ_WRITE
+                v.addressSpace == AddressSpace.STORAGE -> AccessMode.READ
+                v.addressSpace == AddressSpace.UNIFORM -> AccessMode.READ
                 else -> return@mapNotNull null // textures, samplers — not data buffers
             }
-            val data = uniformData[group to binding]?.data ?: run {
+            val data = bufferData[group to binding]?.data ?: run {
                 // Buffer not in pipelineState: derive byte size from the resolved store type
                 // so C++ allocates the correct number of bytes for any nested type.
                 val storeType = (environment.globalScope.getEntry(v.name) as ScopeEntry.TypedDecl)
                     .type.asStoreTypeIfReference()
                 List(bufferSizeInBytes(storeType)) { 0 }
             }
-            BufferDescriptor(group, binding, bufferType, data)
+            BufferInfo(group, binding, bufferType, data)
         }
 }
 

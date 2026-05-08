@@ -216,23 +216,23 @@ val builtinNamedTypes =
     )
 
 /**
- * A shader module declares "uniform" variables to allow data to be passed into a pipeline invocation. Uniforms can be
+ * A shader module declares "buffer" (uniform, storage) variables to allow data to be passed into a pipeline invocation. Uniforms can be
  * dynamic between pipeline invocations, but are constant during a particular pipeline invocation.
  *
- * On the assumption that a translation unit declares a uniform bound to group [group] and binding [binding], this
+ * On the assumption that a translation unit declares a buffer bound to group [group] and binding [binding], this
  * function yields that associated global variable declaration.
  *
  * @receiver the translation unit being queried
- * @param group the group associated with the uniform declaration
- * @param binding the binding associated with the uniform declaration
- * @return the global variable declaration for the uniform
+ * @param group the group associated with the buffer declaration
+ * @param binding the binding associated with the buffer declaration
+ * @return the global variable declaration for the buffer
  * @throws [NoSuchElementException] if no matching global variable exists
  */
-fun TranslationUnit.getUniformDeclaration(
+fun TranslationUnit.getBufferDeclaration(
     group: Int,
     binding: Int,
 ): GlobalDecl.Variable {
-    val uniformDeclaration =
+    val bufferDeclaration =
         globalDecls.filterIsInstance<GlobalDecl.Variable>().first {
             (
                 it.attributes
@@ -247,7 +247,7 @@ fun TranslationUnit.getUniformDeclaration(
                         .expression as Expression.IntLiteral
                 ).text.toInt() == binding
         }
-    return uniformDeclaration
+    return bufferDeclaration
 }
 
 fun isStatementFunctionCallBuiltin(functionCall: Statement.FunctionCall): Boolean {

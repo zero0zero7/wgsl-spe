@@ -22,29 +22,35 @@ import java.math.BigDecimal
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/**
- * This class provides information about a uniform buffers in terms of the bytes it should contain at
- * runtime - i.e., the data that should be put into the buffer by a WebGPU API call.
- */
+
+// Can be sent to C++: describes each buffer the shader needs, including its type and initial bytes.
 @Serializable
-data class UniformBufferInfoByteLevel(
+data class BufferInfo(
     val group: Int,
     val binding: Int,
+    val accessMode: AccessMode,
     val data: List<Int>, // Each integer represents a byte
 )
 
+
 @Serializable
 class PipelineState(
-    private val uniformValues: Map<Int, Map<Int, Expression>>,
+    private val bufferValues: Map<Int, Map<Int, Pair<AccessMode, Expression>>>,
 ) {
-    fun getUniformGroups(): Set<Int> = uniformValues.keys
+    fun getBufferGroups(): Set<Int> = bufferValues.keys
 
-    fun getUniformBindingsForGroup(group: Int): Set<Int> = uniformValues[group]!!.keys
+    fun getBufferBindingsForGroup(group: Int): Set<Int> = bufferValues[group]!!.keys
 
-    fun getUniformValue(
+    fun getBufferValue(
         group: Int,
         binding: Int,
-    ): Expression = uniformValues[group]!![binding]!!.clone()
+    ): Expression = bufferValues[group]!![binding]!!.second.clone()
+
+    fun getBufferAccess(
+        group: Int,
+        binding: Int,
+    ): AccessMode = bufferValues[group]!![binding]!!.first
+
 }
 
 @Serializable
@@ -63,18 +69,20 @@ class ShaderJob(
     @Transient
     val environment: ResolvedEnvironment = resolve(tu)
 
-    fun getByteLevelContentsForUniformBuffers(): List<UniformBufferInfoByteLevel> {
-        val result = mutableListOf<UniformBufferInfoByteLevel>()
-        for (group in pipelineState.getUniformGroups().sorted()) {
-            for (binding in pipelineState.getUniformBindingsForGroup(group).sorted()) {
+    fun getByteLevelContentsForBuffers(): List<BufferInfo> {
+        val result = mutableListOf<BufferInfo>()
+        for (group in pipelineState.getBufferGroups().sorted()) {
+            for (binding in pipelineState.getBufferBindingsForGroup(group).sorted()) {
+                val bufferDeclaration = tu.getBufferDeclaration(group, binding)
                 result.add(
-                    UniformBufferInfoByteLevel(
+                    BufferInfo(
                         group = group,
                         binding = binding,
+                        accessMode = bufferDeclaration.accessMode ?: AccessMode.READ, // Assumes read if not stated (TODO: CHECK against grammar)
                         data =
                             getBytesForExpression(
-                                type = getUniformStoreType(environment, tu.getUniformDeclaration(group, binding)),
-                                value = pipelineState.getUniformValue(group, binding),
+                                type = getBufferStoreType(environment, bufferDeclaration),
+                                value = pipelineState.getBufferValue(group, binding),
                                 offset = 0,
                             ),
                     ),
@@ -179,43 +187,44 @@ fun intLiteralToBytes(value: Expression.IntLiteral): List<Int> {
 
 fun createShaderJob(
     shaderText: String,
-    uniformBuffers: List<UniformBufferInfoByteLevel>,
+    buffers: List<BufferInfo>,
 ): ShaderJob {
     val tu: TranslationUnit = parseFromString(shaderText, LoggingParseErrorListener())
     val environment: ResolvedEnvironment = resolve(tu)
-    val uniformValues: MutableMap<Int, MutableMap<Int, Expression>> = mutableMapOf()
-    for (uniformBuffer in uniformBuffers) {
-        val group: Int = uniformBuffer.group
-        val binding: Int = uniformBuffer.binding
-        val bufferBytes: List<UByte> = uniformBuffer.data.map(Int::toUByte)
+    val bufferValues: MutableMap<Int, MutableMap<Int, Pair<AccessMode, Expression>>> = mutableMapOf()
+    for (buffer in buffers) {
+        val group: Int = buffer.group
+        val binding: Int = buffer.binding
+        val access: AccessMode = buffer.accessMode
+        val bufferBytes: List<UByte> = buffer.data.map(Int::toUByte)
 
-        val uniformType: Type = getUniformStoreType(environment, tu.getUniformDeclaration(group, binding))
+        val bufferType: Type = getBufferStoreType(environment, tu.getBufferDeclaration(group, binding))
 
         val (literalExpr, newBufferByteIndex) =
             literalExprFromBytes(
-                uniformType,
+                bufferType,
                 bufferBytes,
                 0,
             )
         assert(newBufferByteIndex == bufferBytes.size)
-        uniformValues.getOrPut(group, { mutableMapOf() })[binding] = literalExpr
+        bufferValues.getOrPut(group, { mutableMapOf() })[binding] = Pair(access, literalExpr)
     }
-    return ShaderJob(tu, PipelineState(uniformValues))
+    return ShaderJob(tu, PipelineState(bufferValues))
 }
 
-private fun getUniformStoreType(
+private fun getBufferStoreType(
     environment: ResolvedEnvironment,
-    uniformDeclaration: GlobalDecl.Variable,
-) = if (uniformDeclaration.typeDecl is TypeDecl.NamedType) {
-    getUniformStoreTypeByName(environment, uniformDeclaration.typeDecl.name)
+    bufferDeclaration: GlobalDecl.Variable,
+) = if (bufferDeclaration.typeDecl is TypeDecl.NamedType) {
+    getBufferStoreTypeByName(environment, bufferDeclaration.typeDecl.name)
 } else {
-    getUniformStoreTypeByName(environment, uniformDeclaration.name)
+    getBufferStoreTypeByName(environment, bufferDeclaration.name)
 }
 
-private fun getUniformStoreTypeByName(
+private fun getBufferStoreTypeByName(
     environment: ResolvedEnvironment,
-    uniformName: String,
-) = (environment.globalScope.getEntry(uniformName) as ScopeEntry.TypedDecl).type.asStoreTypeIfReference()
+    bufferName: String,
+) = (environment.globalScope.getEntry(bufferName) as ScopeEntry.TypedDecl).type.asStoreTypeIfReference()
 
 private fun literalExprFromBytes(
     type: Type,

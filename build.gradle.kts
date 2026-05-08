@@ -162,4 +162,5 @@ tasks.register<JavaExec>("executePipeline") {
     mainClass.set("com.wgslspe.tools.PipelineKt")
     classpath = sourceSets["main"].runtimeClasspath
     jvmArgs("-Djava.library.path=src/main/cpp/build")
+    systemProperty("kotlinx.serialization.json.trace", "true")
 }
