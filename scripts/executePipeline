@@ -1,0 +1,7 @@
+#!/bin/bash
+
+if [ -n "$DEBUG" ]; then
+    ./gradlew executePipeline --debug-jvm --args="$*"
+else
+    ./gradlew executePipeline --args="$*"
+fi

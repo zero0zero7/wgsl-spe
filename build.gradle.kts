@@ -157,3 +157,9 @@ tasks.register<JavaExec>("runShader") {
     classpath = sourceSets["main"].runtimeClasspath
     jvmArgs("-Djava.library.path=src/main/cpp/build")
 }
+
+tasks.register<JavaExec>("executePipeline") {
+    mainClass.set("com.wgslspe.tools.PipelineKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    jvmArgs("-Djava.library.path=src/main/cpp/build")
+}
