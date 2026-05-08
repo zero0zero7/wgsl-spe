@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Usage:
+#   ./run_shader.sh -- path <shader.wgsl>
+#   ./run_shader.sh -- path <shader.wgsl> --uniforms <uniforms.json>
+#
+# If no uniforms file is given, looks for <shader>.uniforms.json automatically.
+# The JNI library must be built first:
+#   cd src/main/cpp && mkdir -p build && cd build && cmake .. && make
+
+./gradlew runShader --args="$*"

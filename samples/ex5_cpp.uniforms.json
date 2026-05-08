@@ -1,0 +1,7 @@
+
+  {
+    "entryPoint": "main",
+    "buffers": [
+      {"group":  0, "binding":  0, "data":  [0,0], "bufferType":"storage_rw"}
+    ]
+  }
