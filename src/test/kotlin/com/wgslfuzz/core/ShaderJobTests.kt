@@ -120,14 +120,14 @@ class ShaderJobTests {
 
     @Test
     fun `Test createShaderJob with struct uniform type`() {
-        val uniformBuffers = Json.decodeFromString<List<UniformBufferInfoByteLevel>>(exampleUniformBuffers1)
+        val uniformBuffers = Json.decodeFromString<List<BufferInfo>>(exampleUniformBuffers1)
         val shaderJob =
             createShaderJob(
                 exampleShaderText1,
                 uniformBuffers,
             )
-        assertEquals(uniformBuffers, shaderJob.getByteLevelContentsForUniformBuffers())
-        val structValue = shaderJob.pipelineState.getUniformValue(0, 0) as Expression.StructValueConstructor
+        assertEquals(uniformBuffers, shaderJob.getByteLevelContentsForBuffers())
+        val structValue = shaderJob.pipelineState.getBufferValue(0, 0) as Expression.StructValueConstructor
         val aExpr = structValue.args[0] as Expression.IntLiteral
         assertEquals("1i", aExpr.text)
         val bExpr = structValue.args[1] as Expression.Vec2ValueConstructor
@@ -148,20 +148,20 @@ class ShaderJobTests {
 
     @Test
     fun `Test createShaderJob without struct uniform type`() {
-        val uniformBuffers = Json.decodeFromString<List<UniformBufferInfoByteLevel>>(exampleUniformBuffers2)
+        val uniformBuffers = Json.decodeFromString<List<BufferInfo>>(exampleUniformBuffers2)
         val shaderJob =
             createShaderJob(
                 exampleShaderText2,
                 uniformBuffers,
             )
-        assertEquals(uniformBuffers, shaderJob.getByteLevelContentsForUniformBuffers())
+        assertEquals(uniformBuffers, shaderJob.getByteLevelContentsForBuffers())
 
-        val a = shaderJob.pipelineState.getUniformValue(group = 0, binding = 0) as Expression.Vec3ValueConstructor
+        val a = shaderJob.pipelineState.getBufferValue(group = 0, binding = 0) as Expression.Vec3ValueConstructor
         assertEquals("1i", (a.args[0] as Expression.IntLiteral).text)
         assertEquals("2i", (a.args[1] as Expression.IntLiteral).text)
         assertEquals("3i", (a.args[2] as Expression.IntLiteral).text)
 
-        val b = shaderJob.pipelineState.getUniformValue(group = 0, binding = 1) as Expression.IntLiteral
+        val b = shaderJob.pipelineState.getBufferValue(group = 0, binding = 1) as Expression.IntLiteral
         assertEquals("4i", b.text)
     }
 }
