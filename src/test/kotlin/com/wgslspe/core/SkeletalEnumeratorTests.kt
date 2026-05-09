@@ -8,6 +8,7 @@ import kotlin.collections.get
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 
 fun equalTu(skeleton: TranslationUnit, accept: List<TranslationUnit>) : Int {
     for ((idx, tu) in accept.withIndex()) {
@@ -142,7 +143,6 @@ class SkeletalEnumeratorTests {
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         for ((skeleton, charVect) in allReplacementSkeletons(tu, env)) {
-            println(charVect)
             val baos = ByteArrayOutputStream()
             AstWriter(out = PrintStream(baos)).emit(skeleton)
             val text = baos.toString()
@@ -209,7 +209,6 @@ class SkeletalEnumeratorTests {
         var accept = listOf(tu, expect_tu)
         val contains = MutableList(accept.size) {-1}
         for ((skeleton, charVect) in skeletons) {
-            println(charVect)
             var corr = equalTu(skeleton, accept)
             assertFalse{corr == -1}
             contains[corr] = corr
@@ -255,12 +254,32 @@ class SkeletalEnumeratorTests {
         var accept = listOf(tu, expect1, expect2, expect3, expect4, expect5)
         val contains = MutableList(accept.size) {-1}
         for ((skeleton, charVect) in skeletons) {
-            println(charVect)
             var corr = equalTu(skeleton, accept)
             assertFalse{corr == -1}
             contains[corr] = corr
         }
         assertTrue{contains == (0 until accept.size).toList()}
+    }
+
+    @Test
+    fun replacementCapturesAccessMode() {
+        // With only `a` in scope, every replacement must be `a`.
+        val src = """
+            @group(0) @binding(0) var<storage, read_write> result: vec2<f32>;
+            @group(0) @binding(1) var<storage, read_write> a: vec2<f32>;
+            @group(0) @binding(2) var<storage, read> b: vec2<f32>;
+            fn f() {
+              result = a + b;
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        val env = resolve(tu)
+        val skeletons = allReplacementSkeletons(tu, env).toList()
+        // Replacements
+        // Lhs of Assignment can only be "result" or "a", not "b"
+        for ((skeleton, charVect) in skeletons) {
+            assertNotEquals("b", ((((skeleton.globalDecls[3] as GlobalDecl.Function).body.statements[0] as Statement.Assignment).lhsExpression) as LhsExpression.Identifier).name)
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -298,7 +317,6 @@ class SkeletalEnumeratorTests {
         var accept = listOf(tu, expect1, expect2, expect3)
         val contains = MutableList(accept.size) {-1}
         for ((skeleton, charVect) in skeletons) {
-            println(charVect)
             var corr = equalTu(skeleton, accept)
             assertFalse{corr == -1}
             contains[corr] = corr

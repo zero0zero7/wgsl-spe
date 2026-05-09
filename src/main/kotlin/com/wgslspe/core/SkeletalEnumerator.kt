@@ -1,6 +1,7 @@
 package com.wgslspe.core
 
 import com.wgslfuzz.core.*
+import io.ktor.util.reflect.instanceOf
 
 /**
  * A candidate expression for skeletal replacement, paired with its concrete type and the scope
@@ -187,8 +188,47 @@ private fun valueTypeOf(type: Type): Type =
         else -> type
     }
 
+private fun addrspaceAccessFilter(candidate: Type, original: Type): Boolean {
+    val candidateRef = candidate as? Type.Reference
+    val originalRef = original as? Type.Reference
+
+//    val addrspaceMatch = candidateRef?.addressSpace == originalRef?.addressSpace
+    val addrspaceMatch = true
+    val accessMatch = if (candidateRef?.accessMode == null) originalRef?.accessMode == null
+    else originalRef?.accessMode != null && candidateRef.accessMode >= originalRef.accessMode
+    println("$candidate, $candidateRef")
+    println("$original, $originalRef")
+    println(accessMatch)
+    return addrspaceMatch && accessMatch
+
+    // Needs to trace both candidate and original back to their declaration to identify their respective addressSpace and accessMode
+//    fun helper(node: AstNode): Pair<AddressSpace?, AccessMode?> {
+//        return when (node) {
+//            is TypeDecl.Pointer -> Pair(node.addressSpace, node.accessMode)
+//            is GlobalDecl.Variable -> Pair(node.addressSpace, node.accessMode)
+//            is Statement.Variable -> Pair(node.addressSpace, node.accessMode)
+//            is TypeDecl.TextureStorage1D -> Pair(null, node.accessMode)
+//            is TypeDecl.TextureStorage2D -> Pair(null, node.accessMode)
+//            is TypeDecl.TextureStorage2DArray -> Pair(null, node.accessMode)
+//            is TypeDecl.TextureStorage3D -> Pair(null, node.accessMode)
+//            else -> Pair(null, null)
+//        }
+//    }
+//    fun accessHelper(originalAccess: AccessMode?, candidateAccess: AccessMode?) =
+//        if (originalAccess == null) candidateAccess == null
+//        else candidateAccess != null && candidateAccess >= originalAccess
+//
+//    val (candAddr, canAcc) = helper(candidate)
+//    val (originalAddr, originalAcc) = helper(original)
+//    println("$candidate, $candAddr, $canAcc")
+//    println("$original, $originalAddr, $originalAcc")
+//    return candAddr == originalAddr
+//            && accessHelper(originalAcc, canAcc)
+}
+
 // Returns names of all value declarations in [scope] whose store type matches [targetType].
-private fun variablesOfType(
+private fun suitableVariables(
+    node: AstNode,
     scope: Scope,
     targetType: Type,
 ): List<String> {
@@ -198,6 +238,8 @@ private fun variablesOfType(
         .filterIsInstance<ScopeEntry.TypedDecl>()
         .filter { it !is ScopeEntry.Struct && it !is ScopeEntry.TypeAlias }
         .filter { entry -> defaultConcretizationOf(valueTypeOf(entry.type)) == targetValueType }
+        .filter { print(it)
+            addrspaceAccessFilter(it.type, targetType) }
         .map { it.declName }
 }
 
@@ -216,13 +258,14 @@ fun allReplacementSkeletons(
 ): Sequence<Pair<TranslationUnit, List<String>>> {
     val (_, usages) = collectSkeletalCandidates(tu, env)
     if (usages.isEmpty()) return emptySequence()
+    println(usages)
 
     val choices: List<List<Pair<AstNode, AstNode>>> = usages
         .map { (node, concreteType, scope) ->
-            variablesOfType(scope, concreteType).map { varName -> node to node.cloneWithName(varName) }
+            suitableVariables(node, scope, concreteType).map { varName -> node to node.cloneWithName(varName) }
         }
         .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
-    val tmp = choices.map { it.size }.reduce(Int::times)
+    val tmp = choices.map { it.size }.reduce(Int::times) // returns product of number of choices for each usage
     return enumerateCombinations(choices).take(minOf(maxReplacements, tmp)).map { (combination, charVect) ->
         val replacementMap = combination.toMap()
         Pair(tu.clone { node -> replacementMap[node] }, charVect)
@@ -250,15 +293,15 @@ private fun enumerateCombinations(
             yield(Pair(combi, charVect.toList())) // .toList() is required so that a copy of the current state of charVect is returned, else, it would be overwritten in future iterations (combinations). If .toList() instead of .take() is used to extract the pairs returned by enumerateCombinations(), charVect for all combinations would be the same despite the TU being diverse
             return@sequence
         }
-        for (option in choices[usageIdx]) { // option is the Pair<usageNode, replacementNode>
-            val replacement = option.second
+        for (choice in choices[usageIdx]) { // choice is the Pair<usageNode, replacementNode>
+            val replacement = choice.second
             when (replacement) {
                 is LhsExpression.Identifier -> charVect[usageIdx] = replacement.name
                 is Expression.Identifier -> charVect[usageIdx] = replacement.name
                 else -> throw IllegalStateException("Unexpected. Replacement should be LhsExpr.Id or Expr.Id, not $replacement")
             }
 
-            yieldAll(enumerateCombinationsFrom(usageIdx + 1, combi + option, charVect))
+            yieldAll(enumerateCombinationsFrom(usageIdx + 1, combi + choice, charVect))
         }
     }
 
