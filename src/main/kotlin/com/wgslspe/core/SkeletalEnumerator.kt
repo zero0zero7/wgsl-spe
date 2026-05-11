@@ -25,7 +25,7 @@ fun collectSkeletalCandidates(
 
 sealed class NodeRole {
     class Decl(val overridable: Boolean) : NodeRole() // whether declared variable's value can be re-writen
-    class Usage(val overides: Boolean) : NodeRole() // whether the usage rewrites the variable's value
+    class Usage(val overrides: Boolean) : NodeRole() // whether the usage rewrites the variable's value
     class None : NodeRole()
 }
 
@@ -53,10 +53,10 @@ private fun collectCandidatesFromNode(
         // Identifier leaves: Expression.Identifier is always a usage; LhsExpression.Identifier
         // is a decl when written to (assignment/increment/decrement) and a usage otherwise.
         is Expression.Identifier ->
-            addUsage(node, env.typeOf(node))
+            addUsage(node, env.typeOf(node), (role as NodeRole.Usage).overrides)
         is LhsExpression.Identifier -> when (role) {
             is NodeRole.Decl -> addDecl(node, env.typeOf(node))
-            is NodeRole.Usage -> addUsage(node, env.typeOf(node))
+            is NodeRole.Usage -> addUsage(node, env.typeOf(node), role.overrides)
             is NodeRole.None -> {}
         }
 
@@ -91,9 +91,9 @@ private fun collectCandidatesFromNode(
             recurse(init, NodeRole.Usage(false))
         }
 
-        // Assignment statements: the write target is a Decl(true) candidate; the rhs is Usage(false).
+        // Assignment statements: the write target is a Usage(true) candidate; the rhs is Usage(false).
         is Statement.Assignment -> {
-            node.lhsExpression?.let { recurse(it, NodeRole.Decl(true)) }
+            node.lhsExpression?.let { recurse(it, NodeRole.Usage(true)) }
             recurse(node.rhs, NodeRole.Usage(false))
         }
         is Statement.Increment -> recurse(node.target, NodeRole.Usage(true))
@@ -200,17 +200,17 @@ private fun valueTypeOf(type: Type): Type =
         else -> type
     }
 
-private fun accessFilter(candidate: Type, original: Type): Boolean {
-    val candidateRef = candidate as? Type.Reference
-    val originalRef = original as? Type.Reference
 
-    val accessMatch = if (candidateRef?.accessMode == null) originalRef?.accessMode == null
-    else originalRef?.accessMode != null && candidateRef.accessMode >= originalRef.accessMode
-    println("candidate, $candidate, $candidateRef")
-    println("original, $original, $originalRef")
-    println(accessMatch)
-    return accessMatch
-
+private fun addrAccessFilter(candidate: Type, original: Type): Boolean {
+    fun spaceAndMode(type: Type) = when (type) {
+        is Type.Reference -> type.addressSpace to type.accessMode
+        is Type.Pointer   -> type.addressSpace to type.accessMode
+        else              -> null
+    }
+    val (cSpace, cMode) = spaceAndMode(candidate) ?: return true
+    val (oSpace, oMode) = spaceAndMode(original) ?: return true
+    return cSpace >= oSpace && cMode >= oMode
+}
     // Needs to trace both candidate and original back to their declaration to identify their respective addressSpace and accessMode
 //    fun helper(node: AstNode): Pair<AddressSpace?, AccessMode?> {
 //        return when (node) {
@@ -234,7 +234,7 @@ private fun accessFilter(candidate: Type, original: Type): Boolean {
 //    println("$original, $originalAddr, $originalAcc")
 //    return candAddr == originalAddr
 //            && accessHelper(originalAcc, canAcc)
-}
+
 
 // Returns names of all value declarations in [scope] whose store type matches [targetType].
 // If [overrides] is true, only mutable var declarations are returned.
@@ -249,9 +249,9 @@ private fun suitableVariables(
         .filterIsInstance<ScopeEntry.TypedDecl>()
         .filter { it !is ScopeEntry.Struct && it !is ScopeEntry.TypeAlias }
         .filter { entry -> defaultConcretizationOf(valueTypeOf(entry.type)) == targetValueType }
-        // When overrides=true (write context), only mutable var declarations are valid replacements.
-        // Parameters (non-pointer), let bindings, const, and override declarations are all immutable in WGSL.
+        // When usage's overrides=true (write context), only mutable var declarations are valid replacements. Parameters (non-pointer), let bindings, const, and override declarations are all immutable in WGSL.
         .filter { entry -> !overrides || entry is ScopeEntry.LocalVariable || entry is ScopeEntry.GlobalVariable }
+        .filter{ entry -> addrAccessFilter(entry.type, targetType) }
         .map { it.declName }
 }
 
