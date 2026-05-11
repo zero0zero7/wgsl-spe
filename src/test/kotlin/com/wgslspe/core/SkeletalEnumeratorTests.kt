@@ -90,6 +90,34 @@ class SkeletalEnumeratorTests {
     }
 
     // -------------------------------------------------------------------------
+    // singleReplacementSkeletons — constants cant replace an re-assignment
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun cannotOverride() {
+        val src = """
+            const a = 1;
+            override b = 2;
+            fn f(p: i32) -> bool {
+              let c = 3;
+              var d : i32;
+              d = a;
+              var e: i32 = a;
+            }
+        """.trimIndent()
+        val tu = parseFromString(src, LoggingParseErrorListener())
+        println(tu)
+        val env = resolve(tu)
+        val skeletons = allReplacementSkeletons(tu, env).toList()
+
+
+        for ((skeleton, charVect) in skeletons) {
+            val assign : String = (((skeleton.globalDecls[2]  as GlobalDecl.Function).body.statements[2] as Statement.Assignment).lhsExpression as LhsExpression.Identifier).name
+            assertEquals("d", assign , "expect 'd' to be the only lhs")
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // singleReplacementSkeletons — no matching variable → no skeleton
     // -------------------------------------------------------------------------
 
