@@ -73,6 +73,12 @@ fun main(args: Array<String>) {
 
     println("Found shaderFile")
 
+    val originalCompilable = isCompilable(shaderFile.absolutePath)
+    if (originalCompilable != "Success") {
+        System.err.println("Original shader is not compilable: $originalCompilable")
+        exitProcess(1)
+    }
+
     val uniformsFile = File(shaderPath.removeSuffix(".wgsl") + ".uniforms.json")
     val uniformBuffers: List<BufferInfo> =
         if (uniformsFile.exists()) {
