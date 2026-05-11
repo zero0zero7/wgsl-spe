@@ -668,4 +668,26 @@ class ResolverTests {
             )
         }
     }
+
+    @Test
+    fun logicalNotOnVecArrBool() {
+        val input =
+            """
+            var<private> a: vec4<bool>;
+            var<private> g: array<vec2<bool>, 3>;
+              fn f() -> vec4<bool> {
+                var b: array<bool, 2> = array<bool, 2>(true, false);
+                let c : bool = !b[0]; //init: expr.unary .target=indexlookup .target=id ; targetType: Type.Ref
+                let d : bool = !a.x; //init: memberlookup .receiver=id ; targetType: Type.Ref
+                let e : vec2<bool> = !a.xy; // same as above but membername='xy' ; targetType: Type.Ref .storeType: Vector .elementType: Bool
+                let h : vec2<bool> = !g[0].xy; //init: memberlookup init.receiver=indexlookup .target=id(g) init.memberame='xy'
+                return !a;
+//                return a;
+              }
+            """.trimIndent()
+        val errorListener = LoggingParseErrorListener()
+        val tu = parseFromString(input, errorListener)
+        val environment = resolve(tu)
+        println("resol")
+    }
 }
