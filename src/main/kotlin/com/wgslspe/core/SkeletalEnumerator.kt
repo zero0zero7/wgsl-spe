@@ -7,7 +7,7 @@ import io.ktor.util.reflect.instanceOf
  * A candidate expression for skeletal replacement, paired with its concrete type and the scope
  * available at the point where the expression appears.
  */
-data class SkeletalCandidate(val identifier: AstNode, val type: Type, val scope: Scope)
+data class SkeletalCandidate(val identifier: AstNode, val type: Type, val scope: Scope, val overrides: Boolean = false)
 
 /**
  * Returns all variables declaration nodes and usage nodes in [tu] as [SkeletalCandidate]s, each capturing the
@@ -19,11 +19,15 @@ fun collectSkeletalCandidates(
 ): Pair<List<SkeletalCandidate>, List<SkeletalCandidate>> {
     val declarations = mutableListOf<SkeletalCandidate>()
     val usages = mutableListOf<SkeletalCandidate>()
-    collectCandidatesFromNode(tu, NodeRole.NONE, null, env, declarations, usages)
+    collectCandidatesFromNode(tu, NodeRole.None(), null, env, declarations, usages)
     return Pair(declarations, usages)
 }
 
-private enum class NodeRole { DECL, USAGE, NONE }
+sealed class NodeRole {
+    class Decl(val overridable: Boolean) : NodeRole() // whether declared variable's value can be re-writen
+    class Usage(val overides: Boolean) : NodeRole() // whether the usage rewrites the variable's value
+    class None : NodeRole()
+}
 
 private fun collectCandidatesFromNode(
     node: AstNode,
@@ -39,11 +43,11 @@ private fun collectCandidatesFromNode(
     fun recurse(child: AstNode, childRole: NodeRole) =
         collectCandidatesFromNode(child, childRole, currentStatement, env, declarations, usages)
 
-    fun addDecl(n: AstNode, rawType: Type) =
+    fun addDecl(n: AstNode, rawType: Type, overridable: Boolean = true) =
         declarations.add(SkeletalCandidate(n, defaultConcretizationOf(rawType), scope))
 
-    fun addUsage(n: AstNode, rawType: Type) =
-        usages.add(SkeletalCandidate(n, defaultConcretizationOf(rawType), scope))
+    fun addUsage(n: AstNode, rawType: Type, overrides: Boolean = false) =
+        usages.add(SkeletalCandidate(n, defaultConcretizationOf(rawType), scope, overrides))
 
     when (node) {
         // Identifier leaves: Expression.Identifier is always a usage; LhsExpression.Identifier
@@ -51,23 +55,23 @@ private fun collectCandidatesFromNode(
         is Expression.Identifier ->
             addUsage(node, env.typeOf(node))
         is LhsExpression.Identifier -> when (role) {
-            NodeRole.DECL -> addDecl(node, env.typeOf(node))
-            NodeRole.USAGE -> addUsage(node, env.typeOf(node))
-            NodeRole.NONE -> {}
+            is NodeRole.Decl -> addDecl(node, env.typeOf(node))
+            is NodeRole.Usage -> addUsage(node, env.typeOf(node))
+            is NodeRole.None -> {}
         }
 
-        // Variable/value declarations: the declaration node is a DECL candidate; its
+        // Variable/value declarations: the declaration node is a Decl(true) candidate; its
         // initializer subtree is traversed for usages. When there is no initializer the type
         // is read directly from the type annotation.
         is Statement.Value -> {
             addDecl(node, env.typeOf(node.initializer))
-            recurse(node.initializer, NodeRole.USAGE)
+            recurse(node.initializer, NodeRole.Usage(false))
         }
         is Statement.Variable -> {
             val init = node.initializer
             if (init != null) {
                 addDecl(node, env.typeOf(init))
-                recurse(init, NodeRole.USAGE)
+                recurse(init, NodeRole.Usage(false))
             } else {
                 addDecl(node, node.typeDecl!!.toType(scope, env))
             }
@@ -76,105 +80,113 @@ private fun collectCandidatesFromNode(
             val init = node.initializer
             if (init != null) {
                 addDecl(node, env.typeOf(init))
-                recurse(init, NodeRole.USAGE)
+                recurse(init, NodeRole.Usage(false))
             } else {
                 addDecl(node, node.typeDecl!!.toType(scope, env))
             }
         }
         is GlobalDecl.Constant -> {
             val init = node.initializer
-            addDecl(node, env.typeOf(init))
-            recurse(init, NodeRole.USAGE)
+            addDecl(node, env.typeOf(init), false)
+            recurse(init, NodeRole.Usage(false))
         }
 
-        // Assignment statements: the write target is a DECL candidate; the rhs is USAGE.
+        // Assignment statements: the write target is a Decl(true) candidate; the rhs is Usage(false).
         is Statement.Assignment -> {
-            node.lhsExpression?.let { recurse(it, NodeRole.USAGE) }
-            recurse(node.rhs, NodeRole.USAGE)
+            node.lhsExpression?.let { recurse(it, NodeRole.Decl(true)) }
+            recurse(node.rhs, NodeRole.Usage(false))
         }
-        is Statement.Increment -> recurse(node.target, NodeRole.USAGE)
-        is Statement.Decrement -> recurse(node.target, NodeRole.USAGE)
+        is Statement.Increment -> recurse(node.target, NodeRole.Usage(true))
+        is Statement.Decrement -> recurse(node.target, NodeRole.Usage(true))
 
         // LhsExpression wrappers: propagate the incoming role to the inner target so that
-        // the leaf LhsExpression.Identifier ends up with the correct DECL/USAGE classification.
+        // the leaf LhsExpression.Identifier ends up with the correct Decl(true)/Usage(false) classification.
         is LhsExpression.Paren -> recurse(node.target, role)
         is LhsExpression.MemberLookup -> recurse(node.receiver, role)
         is LhsExpression.Dereference -> recurse(node.target, role)
         is LhsExpression.AddressOf -> recurse(node.target, role)
         is LhsExpression.IndexLookup -> {
             recurse(node.target, role)
-            recurse(node.index, NodeRole.USAGE)
+            recurse(node.index, NodeRole.Usage(false))
         }
 
         // Expression nodes: all sub-expressions are in a usage context.
         is Expression.Binary -> {
-            recurse(node.lhs, NodeRole.USAGE)
-            recurse(node.rhs, NodeRole.USAGE)
+            recurse(node.lhs, NodeRole.Usage(false))
+            recurse(node.rhs, NodeRole.Usage(false))
         }
-        is Expression.Unary -> recurse(node.target, NodeRole.USAGE)
-        is Expression.Paren -> recurse(node.target, NodeRole.USAGE)
-        is Expression.MemberLookup -> recurse(node.receiver, NodeRole.USAGE)
+        is Expression.Unary -> recurse(node.target, NodeRole.Usage(false))
+        is Expression.Paren -> recurse(node.target, NodeRole.Usage(false))
+        is Expression.MemberLookup -> recurse(node.receiver, NodeRole.Usage(false))
         is Expression.IndexLookup -> {
-            recurse(node.target, NodeRole.USAGE)
-            recurse(node.index, NodeRole.USAGE)
+            recurse(node.target, NodeRole.Usage(false))
+            recurse(node.index, NodeRole.Usage(false))
         }
-        is Expression.FunctionCall -> node.args.forEach { recurse(it, NodeRole.USAGE) }
+        is Expression.FunctionCall -> node.args.forEach { recurse(it, NodeRole.Usage(false)) }
         is Expression.ValueConstructor -> {
             if (node is Expression.ArrayValueConstructor) {
-                node.elementCount?.let { recurse(it, NodeRole.USAGE) }
+                node.elementCount?.let { recurse(it, NodeRole.Usage(false)) }
             }
-            node.args.forEach { recurse(it, NodeRole.USAGE) }
+            node.args.forEach { recurse(it, NodeRole.Usage(false)) }
         }
         is Expression.BoolLiteral, is Expression.FloatLiteral, is Expression.IntLiteral -> {}
 
-        // Control-flow statements: expressions in conditions are USAGE; compound bodies
-        // are NONE so that the statements inside self-classify.
+        // Control-flow statements: expressions in conditions are Usage(false); compound bodies
+        // are None so that the statements inside self-classify.
         is Statement.If -> {
-            recurse(node.condition, NodeRole.USAGE)
-            recurse(node.thenBranch, NodeRole.NONE)
-            node.elseBranch?.let { recurse(it, NodeRole.NONE) }
+            recurse(node.condition, NodeRole.Usage(false))
+            recurse(node.thenBranch, NodeRole.None())
+            node.elseBranch?.let { recurse(it, NodeRole.None()) }
         }
         is Statement.While -> {
-            recurse(node.condition, NodeRole.USAGE)
-            recurse(node.body, NodeRole.NONE)
+            recurse(node.condition, NodeRole.Usage(false))
+            recurse(node.body, NodeRole.None())
         }
         is Statement.For -> {
-            node.init?.let { recurse(it, NodeRole.NONE) }
-            node.condition?.let { recurse(it, NodeRole.USAGE) }
-            node.update?.let { recurse(it, NodeRole.NONE) }
-            recurse(node.body, NodeRole.NONE)
+            node.init?.let { recurse(it, NodeRole.None()) }
+            node.condition?.let { recurse(it, NodeRole.Usage(false)) }
+            node.update?.let { recurse(it, NodeRole.None()) }
+            recurse(node.body, NodeRole.None())
         }
         is Statement.Loop -> {
-            recurse(node.body, NodeRole.NONE)
-            node.continuingStatement?.let { recurse(it, NodeRole.NONE) }
+            recurse(node.body, NodeRole.None())
+            node.continuingStatement?.let { recurse(it, NodeRole.None()) }
         }
         is Statement.Switch -> {
-            recurse(node.expression, NodeRole.USAGE)
-            node.clauses.forEach { recurse(it, NodeRole.NONE) }
+            recurse(node.expression, NodeRole.Usage(false))
+            node.clauses.forEach { recurse(it, NodeRole.None()) }
         }
-        is Statement.Return -> node.expression?.let { recurse(it, NodeRole.USAGE) }
-        is Statement.FunctionCall -> node.args.forEach { recurse(it, NodeRole.USAGE) }
-        is Statement.ConstAssert -> recurse(node.expression, NodeRole.USAGE)
-        is Statement.Compound -> node.statements.forEach { recurse(it, NodeRole.NONE) }
+        is Statement.Return -> node.expression?.let { recurse(it, NodeRole.Usage(false)) }
+        is Statement.FunctionCall -> node.args.forEach { recurse(it, NodeRole.Usage(false)) }
+        is Statement.ConstAssert -> recurse(node.expression, NodeRole.Usage(false))
+        is Statement.Compound -> node.statements.forEach { recurse(it, NodeRole.None()) }
         is Statement.Break, is Statement.Continue, is Statement.Discard, is Statement.Empty -> {}
 
         is ContinuingStatement -> {
-            node.statements.statements.forEach { recurse(it, NodeRole.NONE) }
-            node.breakIfExpr?.let { recurse(it, NodeRole.USAGE) }
+            node.statements.statements.forEach { recurse(it, NodeRole.None()) }
+            node.breakIfExpr?.let { recurse(it, NodeRole.Usage(false)) }
         }
         is SwitchClause -> {
-            node.caseSelectors.forEach { it?.let { expr -> recurse(expr, NodeRole.USAGE) } }
-            recurse(node.compoundStatement, NodeRole.NONE)
+            node.caseSelectors.forEach { it?.let { expr -> recurse(expr, NodeRole.Usage(false)) } }
+            recurse(node.compoundStatement, NodeRole.None())
         }
 
         // Global declarations: functions and non-variable globals recurse but are not
-        // themselves DECL candidates.
-        is GlobalDecl.Function -> recurse(node.body, NodeRole.NONE)
-        is GlobalDecl.Override -> node.initializer?.let { recurse(it, NodeRole.USAGE) }
-        is GlobalDecl.ConstAssert -> recurse(node.expression, NodeRole.USAGE)
+        // themselves Decl(true) candidates.
+        is GlobalDecl.Function -> recurse(node.body, NodeRole.None())
+        is GlobalDecl.Override -> {
+            val init = node.initializer
+            if (init != null) {
+                addDecl(node, env.typeOf(init), false)
+                recurse(init, NodeRole.Usage(false))
+            } else {
+                addDecl(node, node.typeDecl!!.toType(scope, env), false)
+            }
+        }
+        is GlobalDecl.ConstAssert -> recurse(node.expression, NodeRole.Usage(false))
         is GlobalDecl.Struct, is GlobalDecl.TypeAlias, is GlobalDecl.Empty -> {}
 
-        is TranslationUnit -> node.globalDecls.forEach { recurse(it, NodeRole.NONE) }
+        is TranslationUnit -> node.globalDecls.forEach { recurse(it, NodeRole.None()) }
 
         // All Attribute, All TypeDecl, Directive, ParameterDecl, StructMember
         else -> {}
@@ -188,18 +200,16 @@ private fun valueTypeOf(type: Type): Type =
         else -> type
     }
 
-private fun addrspaceAccessFilter(candidate: Type, original: Type): Boolean {
+private fun accessFilter(candidate: Type, original: Type): Boolean {
     val candidateRef = candidate as? Type.Reference
     val originalRef = original as? Type.Reference
 
-//    val addrspaceMatch = candidateRef?.addressSpace == originalRef?.addressSpace
-    val addrspaceMatch = true
     val accessMatch = if (candidateRef?.accessMode == null) originalRef?.accessMode == null
     else originalRef?.accessMode != null && candidateRef.accessMode >= originalRef.accessMode
-    println("$candidate, $candidateRef")
-    println("$original, $originalRef")
+    println("candidate, $candidate, $candidateRef")
+    println("original, $original, $originalRef")
     println(accessMatch)
-    return addrspaceMatch && accessMatch
+    return accessMatch
 
     // Needs to trace both candidate and original back to their declaration to identify their respective addressSpace and accessMode
 //    fun helper(node: AstNode): Pair<AddressSpace?, AccessMode?> {
@@ -227,10 +237,11 @@ private fun addrspaceAccessFilter(candidate: Type, original: Type): Boolean {
 }
 
 // Returns names of all value declarations in [scope] whose store type matches [targetType].
+// If [overrides] is true, only mutable var declarations are returned.
 private fun suitableVariables(
-    node: AstNode,
     scope: Scope,
     targetType: Type,
+    overrides: Boolean,
 ): List<String> {
     val targetValueType = defaultConcretizationOf(valueTypeOf(targetType))
     return scope
@@ -238,8 +249,9 @@ private fun suitableVariables(
         .filterIsInstance<ScopeEntry.TypedDecl>()
         .filter { it !is ScopeEntry.Struct && it !is ScopeEntry.TypeAlias }
         .filter { entry -> defaultConcretizationOf(valueTypeOf(entry.type)) == targetValueType }
-        .filter { print(it)
-            addrspaceAccessFilter(it.type, targetType) }
+        // When overrides=true (write context), only mutable var declarations are valid replacements.
+        // Parameters (non-pointer), let bindings, const, and override declarations are all immutable in WGSL.
+        .filter { entry -> !overrides || entry is ScopeEntry.LocalVariable || entry is ScopeEntry.GlobalVariable }
         .map { it.declName }
 }
 
@@ -261,8 +273,8 @@ fun allReplacementSkeletons(
     println(usages)
 
     val choices: List<List<Pair<AstNode, AstNode>>> = usages
-        .map { (node, concreteType, scope) ->
-            suitableVariables(node, scope, concreteType).map { varName -> node to node.cloneWithName(varName) }
+        .map { (node, concreteType, scope, overrides) ->
+            suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
         }
         .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
     val tmp = choices.map { it.size }.reduce(Int::times) // returns product of number of choices for each usage
