@@ -1,7 +1,61 @@
 #!/bin/bash
 
-if [ -n "$DEBUG" ]; then
-    ./gradlew executePipeline --debug-jvm --args="$*"
+SEED=42
+VERBOSE=0
+INPUT_WGSL=""
+WGSLSMITH_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --seed)
+            SEED="$2"
+            shift 2
+            ;;
+        --input)
+            INPUT_WGSL="$2"
+            shift 2
+            ;;
+        -v)
+            VERBOSE=1
+            shift
+            ;;
+        *)
+            WGSLSMITH_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [ -n "$INPUT_WGSL" ]; then
+    if [ ! -f "$INPUT_WGSL" ]; then
+        echo "Input file not found: $INPUT_WGSL" >&2
+        exit 1
+    fi
+    SMITH_WGSL="$INPUT_WGSL"
 else
-    ./gradlew executePipeline --args="$*"
+    SMITH_DIR="out/pipeline/${SEED}"
+    SMITH_WGSL="${SMITH_DIR}/smith.wgsl"
+    mkdir -p "$SMITH_DIR"
+
+    echo "Generating shader with wgslsmith (seed=$SEED)..."
+    wgslsmith gen --output "$SMITH_WGSL" --recondition "${WGSLSMITH_ARGS[@]}" "$SEED"
+
+    if [ $? -ne 0 ]; then
+        echo "ERROR: wgslsmith failed" >&2
+        exit 1
+    fi
+fi
+
+if [ "$VERBOSE" -eq 1 ]; then
+    echo "// Shader: $SMITH_WGSL"
+    cat "$SMITH_WGSL"
+    echo ""
+fi
+
+PIPELINE_ARGS+=(--shader "$SMITH_WGSL")
+
+if [ -n "$DEBUG" ]; then
+    ./gradlew executePipeline --debug-jvm --args="${PIPELINE_ARGS[*]}"
+else
+    ./gradlew executePipeline --args="${PIPELINE_ARGS[*]}" --stacktrace
 fi

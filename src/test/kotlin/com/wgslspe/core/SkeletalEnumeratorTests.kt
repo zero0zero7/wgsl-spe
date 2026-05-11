@@ -303,7 +303,6 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val (decls, usages) = collectSkeletalCandidates(tu, env)
         val skeletons = allReplacementSkeletons(tu, env).toList()
         // Replacements
         // Lhs of Assignment can only be "result" or "a", not "b"
