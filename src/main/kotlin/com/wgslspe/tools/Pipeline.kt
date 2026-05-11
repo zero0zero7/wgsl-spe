@@ -59,6 +59,7 @@ fun main(args: Array<String>) {
         ).default("out")
     parser.parse(args)
 
+    println(shaderPath)
     // Set up input, output files paths and directories
     val shaderName = File(shaderPath).nameWithoutExtension
     val outDir = File(outputDir, shaderName)
@@ -70,6 +71,8 @@ fun main(args: Array<String>) {
         exitProcess(1)
     }
 
+    println("Found shaderFile")
+
     val uniformsFile = File(shaderPath.removeSuffix(".wgsl") + ".uniforms.json")
     val uniformBuffers: List<BufferInfo> =
         if (uniformsFile.exists()) {
@@ -79,7 +82,7 @@ fun main(args: Array<String>) {
         }
 
 
-    val shaderJob = createShaderJob(shaderFile.readText(), uniformBuffers)
+    val shaderJob = createShaderJob(shaderFile.readText(), uniformBuffers, timeoutMilliseconds = Int.MAX_VALUE)
     val tu = shaderJob.tu
     val env = shaderJob.environment
 
@@ -103,7 +106,7 @@ fun main(args: Array<String>) {
         val tintCompilable = isCompilable(skeletonFile.absolutePath)
         println(tintCompilable)
         // 3. Execute in Dawn
-        val skeletonJob = createShaderJob(skeletonFile.readText(), uniformBuffers)
+        val skeletonJob = createShaderJob(skeletonFile.readText(), uniformBuffers, timeoutMilliseconds = Int.MAX_VALUE)
         val results: List<BufferResult> = DawnHarness.execute(skeletonJob)
 //        println(Json { prettyPrint = true }.encodeToString(results))
         println(results.joinToString("\n"))

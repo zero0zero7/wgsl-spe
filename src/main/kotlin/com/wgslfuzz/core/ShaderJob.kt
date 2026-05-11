@@ -188,8 +188,9 @@ fun intLiteralToBytes(value: Expression.IntLiteral): List<Int> {
 fun createShaderJob(
     shaderText: String,
     buffers: List<BufferInfo>,
+    timeoutMilliseconds: Int = 10000,
 ): ShaderJob {
-    val tu: TranslationUnit = parseFromString(shaderText, LoggingParseErrorListener())
+    val tu: TranslationUnit = parseFromString(shaderText, LoggingParseErrorListener(), timeoutMilliseconds)
     val environment: ResolvedEnvironment = resolve(tu)
     val bufferValues: MutableMap<Int, MutableMap<Int, Pair<AccessMode, Expression>>> = mutableMapOf()
     for (buffer in buffers) {
