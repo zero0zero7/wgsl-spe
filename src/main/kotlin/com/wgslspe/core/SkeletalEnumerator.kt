@@ -266,7 +266,7 @@ private fun suitableVariables(
 fun allReplacementSkeletons(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
-    maxReplacements: Int = Int.MAX_VALUE,
+    maxSkeletons: Int = Int.MAX_VALUE,
 ): Sequence<Pair<TranslationUnit, List<String>>> {
     val (_, usages) = collectSkeletalCandidates(tu, env)
     if (usages.isEmpty()) return emptySequence()
@@ -276,8 +276,9 @@ fun allReplacementSkeletons(
             suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
         }
         .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
-    val tmp = choices.map { it.size }.reduce(Int::times) // returns product of number of choices for each usage
-    return enumerateCombinations(choices).take(minOf(maxReplacements, tmp)).map { (combination, charVect) ->
+    val tmp = choices.fold(1L) { acc, list -> minOf(acc * list.size, Int.MAX_VALUE.toLong()) }
+    println("Total combinations (capped at Int.MAX_VALUE): $tmp")
+    return enumerateCombinations(choices).take(maxSkeletons).map { (combination, charVect) ->
         val replacementMap = combination.toMap()
         Pair(tu.clone { node -> replacementMap[node] }, charVect)
     }
