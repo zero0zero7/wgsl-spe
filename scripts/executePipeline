@@ -7,6 +7,7 @@ Usage: executePipeline [options] [wgslsmith-args...]
 Options:
   --seed <n>      Seed for wgslsmith shader generation (default: 42)
   --input <file>  Use an existing .wgsl file instead of generating one
+  --limit <n>     Maximum number of skeletons to enumerate
   -v              Verbose: print the shader source before running the pipeline
   -h, --help      Show this help message
 
@@ -18,6 +19,7 @@ EOF
 SEED=42
 VERBOSE=0
 INPUT_WGSL=""
+LIMIT=""
 WGSLSMITH_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -32,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --input)
             INPUT_WGSL="$2"
+            shift 2
+            ;;
+        --limit)
+            LIMIT="$2"
             shift 2
             ;;
         -v)
@@ -72,6 +78,9 @@ if [ "$VERBOSE" -eq 1 ]; then
 fi
 
 PIPELINE_ARGS+=(--shader "$SMITH_WGSL")
+if [ -n "$LIMIT" ]; then
+    PIPELINE_ARGS+=(--limit "$LIMIT")
+fi
 
 if [ -n "$DEBUG" ]; then
     ./gradlew executePipeline --debug-jvm --args="${PIPELINE_ARGS[*]}"
