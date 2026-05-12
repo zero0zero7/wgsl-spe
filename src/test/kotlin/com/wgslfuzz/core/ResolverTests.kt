@@ -681,6 +681,7 @@ class ResolverTests {
                 let d : bool = !a.x; //init: memberlookup .receiver=id ; targetType: Type.Ref
                 let e : vec2<bool> = !a.xy; // same as above but membername='xy' ; targetType: Type.Ref .storeType: Vector .elementType: Bool
                 let h : vec2<bool> = !g[0].xy; //init: memberlookup init.receiver=indexlookup .target=id(g) init.memberame='xy'
+                let i = array<vec2<bool>, 3>(e, h, !h.xy);
                 return !a;
               }
             """.trimIndent()

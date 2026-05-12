@@ -270,7 +270,6 @@ fun allReplacementSkeletons(
 ): Sequence<Pair<TranslationUnit, List<String>>> {
     val (_, usages) = collectSkeletalCandidates(tu, env)
     if (usages.isEmpty()) return emptySequence()
-    println(usages)
 
     val choices: List<List<Pair<AstNode, AstNode>>> = usages
         .map { (node, concreteType, scope, overrides) ->
