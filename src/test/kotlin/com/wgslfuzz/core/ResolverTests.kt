@@ -682,12 +682,26 @@ class ResolverTests {
                 let e : vec2<bool> = !a.xy; // same as above but membername='xy' ; targetType: Type.Ref .storeType: Vector .elementType: Bool
                 let h : vec2<bool> = !g[0].xy; //init: memberlookup init.receiver=indexlookup .target=id(g) init.memberame='xy'
                 return !a;
-//                return a;
               }
             """.trimIndent()
         val errorListener = LoggingParseErrorListener()
         val tu = parseFromString(input, errorListener)
         val environment = resolve(tu)
-        println("resol")
+    }
+
+    @Test
+    fun logicalNotInSelectExpr() {
+        val input =
+            """
+              fn f() {
+                let fals = vec2<bool>(false, false);
+                let tru = vec2<bool>(true, true);
+                let condition = vec2<bool>(true, true);
+                var res : vec2<i32> = select(fals, !tru, condition);
+              }
+            """.trimIndent()
+        val errorListener = LoggingParseErrorListener()
+        val tu = parseFromString(input, errorListener)
+        val environment = resolve(tu)
     }
 }
