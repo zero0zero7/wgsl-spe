@@ -1,5 +1,20 @@
 #!/bin/bash
 
+usage() {
+    cat <<EOF
+Usage: executePipeline [options] [wgslsmith-args...]
+
+Options:
+  --seed <n>      Seed for wgslsmith shader generation (default: 42)
+  --input <file>  Use an existing .wgsl file instead of generating one
+  -v              Verbose: print the shader source before running the pipeline
+  -h, --help      Show this help message
+
+If --input is not given, wgslsmith is invoked to generate a shader using
+the provided seed. Any unrecognised options are forwarded to wgslsmith.
+EOF
+}
+
 SEED=42
 VERBOSE=0
 INPUT_WGSL=""
@@ -7,6 +22,10 @@ WGSLSMITH_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         --seed)
             SEED="$2"
             shift 2

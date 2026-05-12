@@ -36,7 +36,7 @@ fun findCommonType(types: List<Type>): Type {
             if (result.isAbstractionOf(type)) {
                 result = type
             } else if (!type.isAbstractionOf(result)) {
-                throw RuntimeException("No common type found")
+                throw RuntimeException("No common type found for types: $types")
             }
         }
     }
