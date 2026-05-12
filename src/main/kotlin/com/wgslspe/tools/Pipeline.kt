@@ -66,13 +66,6 @@ fun main(args: Array<String>) {
             description = "Maximum number of skeletons to print (default: all)",
         )
 
-    val maxReplacements by parser
-        .option(
-            ArgType.Int,
-            fullName = "max-replacements",
-            description = "Maximum number of simultaneous replacements per skeleton (default: unlimited)",
-        ).default(Int.MAX_VALUE)
-
     val outputDir by parser
         .option(
             ArgType.String,
@@ -125,10 +118,9 @@ fun main(args: Array<String>) {
     }
 
     // 1. Enumerate skeletons
-    val skeletons = allReplacementSkeletons(tu, env, maxReplacements)
-    println(skeletons.count())
     val maxSkeletons = limit ?: Int.MAX_VALUE
-    for ((idx, skeletonCharVect) in skeletons.take(maxSkeletons).withIndex()) {
+    val skeletons = allReplacementSkeletons(tu, env, maxSkeletons)
+    for ((idx, skeletonCharVect) in skeletons.withIndex()) {
         val (skeleton, charVect) = skeletonCharVect
         val skeletonName = "skeleton_%03d.wgsl".format(idx)
         val skeletonFile = File(outDir, skeletonName)
@@ -139,11 +131,13 @@ fun main(args: Array<String>) {
         val tintCompilable = isCompilable(skeletonFile.absolutePath)
         print("Tint compile: $tintCompilable. ")
         // 3. Execute in Dawn
-        val skeletonJob = createShaderJob(skeletonFile.readText(), uniformBuffers, timeoutMilliseconds = Int.MAX_VALUE)
-        val results: List<BufferResult> = DawnHarness.execute(skeletonJob)
-        println("Executed in dawn harness. Deleting ....")
-//        println(Json { prettyPrint = true }.encodeToString(results))
-//        println(results.joinToString("\n"))
-        skeletonFile.delete()
+        val skeletonJob = createShaderJob(skeletonFile.readText(), uniformBuffers, timeoutMilliseconds = 60_000)
+        try {
+            val results: List<BufferResult> = DawnHarness.execute(skeletonJob)
+            println("Deleting.")
+            skeletonFile.delete()
+        } catch (e: Exception) {
+            println("BUG: Dawn crashed/timed out — keeping $skeletonName. ${e.message}")
+        }
     }
 }
