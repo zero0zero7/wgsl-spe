@@ -16,6 +16,10 @@ the provided seed. Any unrecognised options are forwarded to wgslsmith.
 EOF
 }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$SCRIPT_DIR/../.env" ] && source "$SCRIPT_DIR/../.env"
+
+
 SEED=42
 VERBOSE=0
 INPUT_WGSL=""
