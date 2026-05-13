@@ -158,6 +158,15 @@ set(DAWN_LIBS
     absl_utf8_for_code_point
 )
 
+if(UNIX AND NOT APPLE)
+    set(LINUX_EXTRA_LIBS
+        tint_lang_spirv_reader
+        tint_lang_spirv_reader_common
+        tint_lang_spirv_reader_lower
+        tint_lang_spirv_reader_parser
+    )
+endif()
+
 set(APPLE_FRAMEWORKS
     "-framework Metal"
     "-framework CoreGraphics"
@@ -174,12 +183,11 @@ find_package(JNI REQUIRED)
 add_executable(dawn_harness dawn_harness.cpp)
 target_include_directories(dawn_harness PRIVATE ${JNI_INCLUDE_DIRS} ${DAWN_INCLUDES})
 target_link_directories(dawn_harness PRIVATE ${DAWN_LINK_DIRS})
-target_link_libraries(dawn_harness PRIVATE ${DAWN_LIBS})
 
 if(APPLE)
     target_link_libraries(dawn_harness PRIVATE ${DAWN_LIBS} ${APPLE_FRAMEWORKS})
 elseif(UNIX)
-    target_link_libraries(dawn_harness PRIVATE -Wl,--start-group ${DAWN_LIBS} -Wl,--end-group dl pthread)
+    target_link_libraries(dawn_harness PRIVATE -Wl,--start-group ${DAWN_LIBS} ${LINUX_EXTRA_LIBS} -Wl,--end-group dl pthread)
 endif()
 
 # ── JNI shared library (loaded by Kotlin via System.loadLibrary) ──────────────
@@ -196,5 +204,5 @@ if(APPLE)
     # Let the JVM resolve JNI symbols at load time instead of link time
     target_link_options(dawn_harness_jni PRIVATE "-undefined dynamic_lookup")
 elseif(UNIX)
-    target_link_libraries(dawn_harness_jni PRIVATE -Wl,--start-group ${DAWN_LIBS} -Wl,--end-group dl pthread)
+    target_link_libraries(dawn_harness_jni PRIVATE -Wl,--start-group ${DAWN_LIBS} ${LINUX_EXTRA_LIBS} -Wl,--end-group dl pthread)
 endif()
