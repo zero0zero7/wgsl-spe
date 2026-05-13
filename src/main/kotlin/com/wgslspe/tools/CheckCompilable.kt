@@ -23,7 +23,8 @@ fun isCompilable(tu: TranslationUnit): String {
     return output
 }
 
-fun isCompilable(filePath: String, tintPath: String = "/Users/limxinyi/Desktop/Masters/Imperial/thesis/dependencies/chromium_depot_tools/dawn/out/Debug/tint"): String {
+fun isCompilable(filePath: String, tintPath: String = System.getenv("TINT_PATH") ?: "tint"): String {
+    println(tintPath)
     val f = File(filePath)
     if (f.isFile() && f.extension=="wgsl") {
         return try {
