@@ -164,6 +164,7 @@ if(UNIX AND NOT APPLE)
         tint_lang_spirv_reader_common
         tint_lang_spirv_reader_lower
         tint_lang_spirv_reader_parser
+        SPIRV-Tools.opt
     )
 endif()
 
