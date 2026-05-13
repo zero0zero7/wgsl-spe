@@ -24,7 +24,6 @@ fun isCompilable(tu: TranslationUnit): String {
 }
 
 fun isCompilable(filePath: String, tintPath: String = System.getenv("TINT_PATH") ?: "tint"): String {
-    println(tintPath)
     val f = File(filePath)
     if (f.isFile() && f.extension=="wgsl") {
         return try {
