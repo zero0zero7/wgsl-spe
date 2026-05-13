@@ -16,6 +16,9 @@ set(DAWN_GEN_INCLUDE_DIR
     CACHE PATH "Dawn generated include directory (webgpu.h, webgpu_cpp.h)")
 
 # ── Shared Dawn configuration ─────────────────────────────────────────────────
+set(DAWN_OUT_DIR
+    "/Users/limxinyi/Desktop/Masters/Imperial/thesis/wgslsmith/target/release/build/dawn-d52d2735c6d7f502/out"
+    CACHE PATH "Dawn generated out build directory")
 
 set(DAWN_INCLUDES
     ${DAWN_SRC_DIR}/include
@@ -25,7 +28,7 @@ set(DAWN_INCLUDES
 
 set(DAWN_LINK_DIRS
     ${DAWN_LIB_DIR}
-    "/Users/limxinyi/Desktop/Masters/Imperial/thesis/wgslsmith/target/release/build/dawn-d52d2735c6d7f502/out"
+    ${DAWN_OUT_DIR}
 )
 
 # Full library list derived from wgslsmith's Dawn build script output
