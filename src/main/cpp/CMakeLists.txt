@@ -177,10 +177,9 @@ target_link_directories(dawn_harness PRIVATE ${DAWN_LINK_DIRS})
 target_link_libraries(dawn_harness PRIVATE ${DAWN_LIBS})
 
 if(APPLE)
-    target_link_libraries(dawn_harness PRIVATE ${APPLE_FRAMEWORKS})
-endif()
-if(UNIX AND NOT APPLE)
-    target_link_libraries(dawn_harness PRIVATE dl pthread)
+    target_link_libraries(dawn_harness PRIVATE ${DAWN_LIBS} ${APPLE_FRAMEWORKS})
+elseif(UNIX)
+    target_link_libraries(dawn_harness PRIVATE -Wl,--start-group ${DAWN_LIBS} -Wl,--end-group dl pthread)
 endif()
 
 # ── JNI shared library (loaded by Kotlin via System.loadLibrary) ──────────────
@@ -191,13 +190,11 @@ target_include_directories(dawn_harness_jni PRIVATE
     ${DAWN_INCLUDES}
 )
 target_link_directories(dawn_harness_jni PRIVATE ${DAWN_LINK_DIRS})
-target_link_libraries(dawn_harness_jni PRIVATE ${DAWN_LIBS})
 
 if(APPLE)
-    target_link_libraries(dawn_harness_jni PRIVATE ${APPLE_FRAMEWORKS})
+    target_link_libraries(dawn_harness_jni PRIVATE ${DAWN_LIBS} ${APPLE_FRAMEWORKS})
     # Let the JVM resolve JNI symbols at load time instead of link time
     target_link_options(dawn_harness_jni PRIVATE "-undefined dynamic_lookup")
-endif()
-if(UNIX AND NOT APPLE)
-    target_link_libraries(dawn_harness_jni PRIVATE dl pthread)
+elseif(UNIX)
+    target_link_libraries(dawn_harness_jni PRIVATE -Wl,--start-group ${DAWN_LIBS} -Wl,--end-group dl pthread)
 endif()
