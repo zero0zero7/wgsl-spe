@@ -164,7 +164,16 @@ if(UNIX AND NOT APPLE)
         tint_lang_spirv_reader_common
         tint_lang_spirv_reader_lower
         tint_lang_spirv_reader_parser
-        SPIRV-Tools.opt
+	tint_lang_spirv_validate
+	tint_lang_glsl
+	tint_lang_glsl_intrinsic
+	tint_lang_glsl_ir
+	tint_lang_glsl_writer
+	tint_lang_glsl_writer_common
+	tint_lang_glsl_writer_helpers
+	tint_lang_glsl_writer_printer
+	tint_lang_glsl_writer_raise
+        SPIRV-Tools-opt
     )
 endif()
 
