@@ -120,8 +120,8 @@ static json runCompute(wgpu::Device& device,
                 break;
         }
 
-        // data is already correctly sized by Kotlin; 16 is the WebGPU minimum.
-        uint64_t bufSize = std::max(bd.data.size(), size_t(16));
+        // data is already correctly sized by Kotlin; WebGPU operations typically require multiples of 4.
+        uint64_t bufSize = std::max(bd.data.size(), size_t(4));
         wgpu::BufferDescriptor bufDesc{};
         bufDesc.size  = bufSize;
         bufDesc.usage = wgpuUsage;
