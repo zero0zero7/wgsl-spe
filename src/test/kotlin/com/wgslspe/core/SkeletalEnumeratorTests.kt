@@ -108,7 +108,7 @@ class SkeletalEnumeratorTests {
         val tu = parseFromString(src, LoggingParseErrorListener())
         println(tu)
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         val (decls, usages) = collectSkeletalCandidates(tu, env)
 
 
@@ -133,7 +133,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         assertTrue(skeletons.isEmpty(), "Expected no skeletons when there is no variable usage (only declarations)")
     }
 
@@ -152,7 +152,7 @@ class SkeletalEnumeratorTests {
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
         val candidates = collectSkeletalCandidates(tu, env)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         assertEquals(1, skeletons.size, "Expected only the original source Tu")
         assertTrue { equalTu(skeletons[0].first, listOf(tu)) == 0 }
     }
@@ -171,7 +171,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        for ((skeleton, charVect) in allReplacementSkeletons(tu, env)) {
+        for ((skeleton, charVect) in getSkeletons(tu, env, random=false)) {
             val baos = ByteArrayOutputStream()
             AstWriter(out = PrintStream(baos)).emit(skeleton)
             val text = baos.toString()
@@ -196,7 +196,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         assertEquals(0, skeletons.size)
     }
 
@@ -209,7 +209,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         assertEquals(0, skeletons.size)
     }
 
@@ -224,7 +224,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         // Replacement -- return a;
         val identifierExpression =
             ((tu.globalDecls[0] as GlobalDecl.Function).body.statements[1] as Statement.Return).expression
@@ -257,7 +257,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         // Replacements
         // -- global_constant + 1;
         // -- return global_constant;
@@ -303,7 +303,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         // Replacements
         // Lhs of Assignment can only be "result" or "a", not "b"
         for ((skeleton, charVect) in skeletons) {
@@ -324,7 +324,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
         assertTrue(skeletons.isNotEmpty())
 
         // Replacements
@@ -351,6 +351,7 @@ class SkeletalEnumeratorTests {
             contains[corr] = corr
         }
         assertTrue{contains == (0 until accept.size).toList()}
+        assertNotEquals(-1, equalTu(getSkeletons(tu, env, n=1, random=true).toList()[0].first, accept), "random skeleton is not accepted" )
     }
 
     @Test
@@ -378,7 +379,7 @@ class SkeletalEnumeratorTests {
         """.trimIndent()
         val tu = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu)
-        val skeletons = allReplacementSkeletons(tu, env).toList()
+        val skeletons = getSkeletons(tu, env, random=false).toList()
     }
 
 }

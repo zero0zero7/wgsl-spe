@@ -180,7 +180,7 @@ class AlphaEquivalenceTests {
         """.trimIndent()
         val tu_src = parseFromString(src, LoggingParseErrorListener())
         val env = resolve(tu_src)
-        val rgsValues = allReplacementSkeletons(tu_src, env).map { (tu, _) -> restrictGrowthStr(tu) }.toList()
+        val rgsValues = getSkeletons(tu_src, env, random=false).map { (tu, _) -> restrictGrowthStr(tu) }.toList()
         assertEquals(4, rgsValues.size, "Expected 4 distinct RGS")
         assertEquals(setOf("0100", "0101", "0111", "0110"), rgsValues.toSet())
     }

@@ -70,6 +70,7 @@ tasks.generateGrammarSource {
 tasks.test {
     useJUnitPlatform()
     testLogging { showStandardStreams = true }
+    jvmArgs("-Djava.library.path=src/main/cpp/build")
 }
 
 java {
