@@ -7,6 +7,7 @@ import com.wgslspe.core.BufferResult
 import com.wgslspe.core.DawnHarness
 import com.wgslspe.core.collectSkeletalCandidates
 import com.wgslspe.core.allReplacementSkeletons
+import com.wgslspe.core.getSkeletons
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
@@ -118,8 +119,7 @@ fun main(args: Array<String>) {
     }
 
     // 1. Enumerate skeletons
-    val maxSkeletons = limit ?: Int.MAX_VALUE
-    val skeletons = allReplacementSkeletons(tu, env, maxSkeletons)
+    val skeletons = getSkeletons(tu, env, n=limit ?: Int.MAX_VALUE, random=true)
     for ((idx, skeletonCharVect) in skeletons.withIndex()) {
         val (skeleton, charVect) = skeletonCharVect
         val skeletonName = "skeleton_%03d.wgsl".format(idx)
@@ -134,7 +134,7 @@ fun main(args: Array<String>) {
         val skeletonJob = createShaderJob(skeletonFile.readText(), uniformBuffers, timeoutMilliseconds = 60_000)
         try {
             val results: List<BufferResult> = DawnHarness.execute(skeletonJob)
-            println("Deleting.")
+            println("Dawn executed successfully. Deleting.")
             skeletonFile.delete()
         } catch (e: Exception) {
             println("BUG: Dawn crashed/timed out — keeping $skeletonName. ${e.message}")

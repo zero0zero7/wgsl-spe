@@ -255,6 +255,32 @@ private fun suitableVariables(
         .map { it.declName }
 }
 
+
+fun getSkeletons(
+    tu: TranslationUnit,
+    env: ResolvedEnvironment,
+    n: Int = Int.MAX_VALUE,
+    random: Boolean = true,
+): Sequence<Pair<TranslationUnit, List<String>>> {
+    val (_, usages) = collectSkeletalCandidates(tu, env)
+    if (usages.isEmpty()) return emptySequence()
+
+    val choices: List<List<Pair<AstNode, AstNode>>> = usages
+        .map { (node, concreteType, scope, overrides) ->
+            suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
+        }
+        .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
+    val tmp = choices.fold(1L) { acc, list -> minOf(acc * list.size, Int.MAX_VALUE.toLong()) }
+    println("Total combinations (capped at Int.MAX_VALUE): $tmp")
+
+    return if (random) {
+        nRandomSkeletons(tu, env, n, choices)
+    }
+    else {
+        allReplacementSkeletons(tu, env, n, choices)
+    }
+}
+
 /**
  * Lazily enumerates (hence Sequence over List) all skeletal variants of [tu] produced by simultaneously replacing between
  * 1 and [maxReplacements] candidate expressions with in-scope variables of matching type.
@@ -267,22 +293,28 @@ fun allReplacementSkeletons(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
     maxSkeletons: Int = Int.MAX_VALUE,
-): Sequence<Pair<TranslationUnit, List<String>>> {
-    val (_, usages) = collectSkeletalCandidates(tu, env)
-    if (usages.isEmpty()) return emptySequence()
-
-    val choices: List<List<Pair<AstNode, AstNode>>> = usages
-        .map { (node, concreteType, scope, overrides) ->
-            suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
-        }
-        .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
-    val tmp = choices.fold(1L) { acc, list -> minOf(acc * list.size, Int.MAX_VALUE.toLong()) }
-    println("Total combinations (capped at Int.MAX_VALUE): $tmp")
-    return enumerateCombinations(choices).take(maxSkeletons).map { (combination, charVect) ->
+    choices: List<List<Pair<AstNode, AstNode>>>,
+): Sequence<Pair<TranslationUnit, List<String>>>  =
+    enumerateCombinations(choices).take(maxSkeletons).map { (combination, charVect) ->
         val replacementMap = combination.toMap()
         Pair(tu.clone { node -> replacementMap[node] }, charVect)
     }
-}
+
+
+fun nRandomSkeletons(
+    tu: TranslationUnit,
+    env: ResolvedEnvironment,
+    n: Int,
+    choices: List<List<Pair<AstNode, AstNode>>>
+): Sequence<Pair<TranslationUnit, List<String>>> =
+    generateSequence { getRandomCombination(choices) }
+    .distinctBy { it.second } // prevents duplicates if n is large
+    .take(n)
+    .map { (combination, charVect) ->
+        val replacementMap = combination.toMap()
+        Pair(tu.clone { node -> replacementMap[node] }, charVect)
+    }
+
 
 /**
  * Yields one replacement per usage across all combinations.
@@ -316,6 +348,30 @@ private fun enumerateCombinations(
             yieldAll(enumerateCombinationsFrom(usageIdx + 1, combi + choice, charVect))
         }
     }
-
     return enumerateCombinationsFrom(0, emptyList(), MutableList(choices.size){""})
+}
+
+
+/**
+ * Yields one random replacement per usage across all combinations.
+ */
+private fun getRandomCombination(
+    choices: List<List<Pair<AstNode, AstNode>>>,
+): Pair<List<Pair<AstNode, AstNode>>, List<String>> {
+    val combination = mutableListOf<Pair<AstNode, AstNode>>()
+    val charVect = mutableListOf<String>()
+
+    var usageIdx = 0
+    while (usageIdx < choices.size) {
+        val picked = choices[usageIdx].random()
+        combination.add(picked)
+        val name = when (val replacement = picked.second) {
+            is LhsExpression.Identifier -> replacement.name
+            is Expression.Identifier -> replacement.name
+            else -> throw IllegalStateException("Unexpected replacement: $replacement")
+        }
+        charVect.add(name)
+        usageIdx++
+    }
+    return Pair(combination, charVect)
 }

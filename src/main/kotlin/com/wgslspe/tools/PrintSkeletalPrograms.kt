@@ -5,6 +5,7 @@ import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.collectSkeletalCandidates
 import com.wgslspe.core.allReplacementSkeletons
+import com.wgslspe.core.getSkeletons
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
@@ -74,7 +75,7 @@ fun main(args: Array<String>) {
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
     if (usages.isNotEmpty()) {
-        val skeletons = allReplacementSkeletons(tu, env, maxReplacements)
+        val skeletons = getSkeletons(tu, env, random=false)
         val maxSkeletons = limit ?: Int.MAX_VALUE
         for ((idx, skeleton_charVect) in skeletons.take(maxSkeletons).withIndex()) {
             val (skeleton, charVect) = skeleton_charVect
