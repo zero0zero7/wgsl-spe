@@ -2,6 +2,7 @@ package com.wgslspe.tools
 
 import com.wgslfuzz.core.AstWriter
 import com.wgslfuzz.core.BufferInfo
+import com.wgslfuzz.core.ShaderJob
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.BufferResult
 import com.wgslspe.core.DawnHarness
@@ -130,10 +131,15 @@ fun main(args: Array<String>) {
         // 2. Check compilable
         val tintCompilable = isCompilable(skeletonFile.absolutePath)
         print("Tint compile: $tintCompilable. ")
+        if (tintCompilable != "Success") {
+            println("Skipping Dawn execution.")
+            skeletonFile.delete()
+            continue
+        }
         // 3. Execute in Dawn
-        val skeletonJob = createShaderJob(skeletonFile.readText(), uniformBuffers, timeoutMilliseconds = 60_000)
+        val skeletonJob = ShaderJob(skeleton, shaderJob.pipelineState)
         try {
-            val results: List<BufferResult> = DawnHarness.execute(skeletonJob)
+            DawnHarness.execute(skeletonJob)
             println("Dawn executed successfully. Deleting.")
             skeletonFile.delete()
         } catch (e: Exception) {

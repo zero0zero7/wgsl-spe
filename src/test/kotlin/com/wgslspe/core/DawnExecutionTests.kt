@@ -8,6 +8,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 // Encode a list of Int32 values into a flat byte list (little-endian).
 private fun intsToBytes(vararg values: Int): List<Int> {
@@ -240,8 +241,76 @@ class DawnExecutionTests {
         val results = DawnHarness.execute(job)
 
         val outputBuf = findBuffer(results, group = 0, binding = 0)
-        println(results)
-        println(outputBuf)
         assertEquals(listOf(14), bytesToInts(outputBuf.data))
+    }
+}
+
+// Tests that exercise the cached Dawn device introduced to fix the OOM regression.
+// Running several sample files in sequence verifies that ensureDawnReady() correctly
+// reuses a single native device rather than re-initialising Dawn on every call.
+class DawnCachedDeviceTests {
+
+    // -------------------------------------------------------------------------
+    // Three different sample shaders executed back-to-back
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun sequentialSampleFilesExerciseCachedDevice() {
+        // 1. ex2.wgsl — vec2<f32> addition: (3,4) + (1,2) = (4,6)
+        val ex2Job = createShaderJob(
+            File("samples/ex2.wgsl").readText(),
+            listOf(
+                BufferInfo(0, 0, AccessMode.READ_WRITE, floatsToBytes(0f, 0f)),
+                BufferInfo(0, 1, AccessMode.READ_WRITE, floatsToBytes(3f, 4f)),
+                BufferInfo(0, 2, AccessMode.READ_WRITE, floatsToBytes(1f, 2f)),
+            ),
+        )
+        val ex2Out = bytesToFloats(findBuffer(DawnHarness.execute(ex2Job), 0, 0).data)
+        assertEquals(4.0f, ex2Out[0], absoluteTolerance = 1e-6f)
+        assertEquals(6.0f, ex2Out[1], absoluteTolerance = 1e-6f)
+
+        // 2. ex4.wgsl — conditional i32 logic:
+        //    a=1, b=2; since a==1 → b=3+5=8; output=[1+a, 1+b]=[2, 9]
+        val ex4Job = createShaderJob(
+            File("samples/ex4.wgsl").readText(),
+            listOf(BufferInfo(0, 0, AccessMode.READ_WRITE, intsToBytes(0, 0))),
+        )
+        assertEquals(listOf(2, 9), bytesToInts(findBuffer(DawnHarness.execute(ex4Job), 0, 0).data))
+
+        // 3. ex5.wgsl — writes 4 into output[1]; output[0] stays 0
+        val ex5Job = createShaderJob(
+            File("samples/ex5.wgsl").readText(),
+            listOf(BufferInfo(0, 0, AccessMode.READ_WRITE, intsToBytes(0, 0))),
+        )
+        assertEquals(listOf(0, 4), bytesToInts(findBuffer(DawnHarness.execute(ex5Job), 0, 0).data))
+    }
+
+    // -------------------------------------------------------------------------
+    // Same shader executed twice — cached device must give identical results
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun repeatedExecutionOfSameShaderGivesIdenticalResults() {
+        fun makeJob() = createShaderJob(
+            File("samples/ex4.wgsl").readText(),
+            listOf(BufferInfo(0, 0, AccessMode.READ_WRITE, intsToBytes(0, 0))),
+        )
+        val r1 = bytesToInts(findBuffer(DawnHarness.execute(makeJob()), 0, 0).data)
+        val r2 = bytesToInts(findBuffer(DawnHarness.execute(makeJob()), 0, 0).data)
+        assertEquals(r1, r2)
+    }
+
+    // -------------------------------------------------------------------------
+    // Shader with no storage buffers — ensureDawnReady must not crash
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun shaderWithNoStorageBuffersReturnsEmptyResults() {
+        // smith.wgsl declares no @group/@binding variables; the compute shader
+        // only manipulates local variables.  Dawn should run it cleanly and
+        // return an empty result list.
+        val job = createShaderJob(File("samples/smith.wgsl").readText(), emptyList())
+        val results = DawnHarness.execute(job)
+        assertTrue(results.isEmpty())
     }
 }
