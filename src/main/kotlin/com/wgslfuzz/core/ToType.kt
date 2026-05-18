@@ -1128,20 +1128,12 @@ fun Expression.Unary.toType(resolvedEnvironment: ResolvedEnvironment): Type =
             Type.Pointer(referenceType.storeType, referenceType.addressSpace, referenceType.accessMode)
         }
 
-        UnaryOperator.LOGICAL_NOT -> {
-            val storeType = resolvedEnvironment.typeOf(target).asStoreTypeIfReference()
-            if (storeType is Type.Scalar && storeType == Type.Bool) {
-                Type.Bool
-            }
-            else if (
-                storeType is Type.Vector && storeType.elementType == Type.Bool ||
-                storeType is Type.Array && storeType.elementType == Type.Bool ||
-                storeType is Type.Matrix && storeType.elementType == Type.Bool
-                ) {
-                storeType
-            }
-            else {
-                throw IllegalArgumentException("Logical not applied to expression $this with non-bool type")
+	UnaryOperator.LOGICAL_NOT -> {
+            val targetType = resolvedEnvironment.typeOf(target).asStoreTypeIfReference()
+            when {
+                targetType == Type.Bool -> Type.Bool
+                targetType is Type.Vector && targetType.elementType == Type.Bool -> targetType
+                else -> throw IllegalArgumentException("Logical not applied to expression $this with non-bool type")
             }
         }
 

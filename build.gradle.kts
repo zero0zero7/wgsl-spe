@@ -70,6 +70,7 @@ tasks.generateGrammarSource {
 tasks.test {
     useJUnitPlatform()
     testLogging { showStandardStreams = true }
+    jvmArgs("-Djava.library.path=src/main/cpp/build")
 }
 
 java {
@@ -163,4 +164,7 @@ tasks.register<JavaExec>("executePipeline") {
     classpath = sourceSets["main"].runtimeClasspath
     jvmArgs("-Djava.library.path=src/main/cpp/build")
     systemProperty("kotlinx.serialization.json.trace", "true")
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    })
 }
