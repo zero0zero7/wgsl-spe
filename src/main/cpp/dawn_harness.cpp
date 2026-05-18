@@ -43,17 +43,36 @@ static std::vector<BufferData> parseBuffers(const std::string& buffersJson) {
     return result;
 }
 
-// ── Device + shader helpers ───────────────────────────────────────────────────
+// ── Cached Dawn state (initialized once, reused across JNI calls) ─────────────
 
-static wgpu::Device makeDevice(wgpu::Adapter& adapter, std::string& outError) {
+static bool g_dawn_ready = false;
+static dawn::native::Instance* g_instance = nullptr;
+static wgpu::Adapter g_adapter;
+static wgpu::Device g_device;
+static std::string g_device_error;
+
+static void ensureDawnReady() {
+    if (g_dawn_ready) return;
+
+    dawnProcSetProcs(&dawn::native::GetProcs());
+    g_instance = new dawn::native::Instance();
+    auto adapters = g_instance->EnumerateAdapters();
+    if (adapters.empty()) throw std::runtime_error("No WebGPU adapters found");
+    g_adapter = wgpu::Adapter(adapters[0].Get());
+
     wgpu::DeviceDescriptor desc{};
     desc.SetUncapturedErrorCallback(
         [](const wgpu::Device&, wgpu::ErrorType, wgpu::StringView msg, std::string* err) {
             *err = std::string(msg.data, msg.length);
         },
-        &outError);
-    return adapter.CreateDevice(&desc);
+        &g_device_error);
+    g_device = g_adapter.CreateDevice(&desc);
+    if (!g_device) throw std::runtime_error("Failed to create device");
+
+    g_dawn_ready = true;
 }
+
+// ── Shader helpers ────────────────────────────────────────────────────────────
 
 static bool compileShader(wgpu::Device& device, const std::string& source,
                           wgpu::ShaderModule& outModule, std::string& outError) {
@@ -120,8 +139,8 @@ static json runCompute(wgpu::Device& device,
                 break;
         }
 
-        // data is already correctly sized by Kotlin; 16 is the WebGPU minimum.
-        uint64_t bufSize = std::max(bd.data.size(), size_t(16));
+        // data is already correctly sized by Kotlin; WebGPU operations typically require multiples of 4.
+        uint64_t bufSize = std::max(bd.data.size(), size_t(4));
         wgpu::BufferDescriptor bufDesc{};
         bufDesc.size  = bufSize;
         bufDesc.usage = wgpuUsage;
@@ -208,23 +227,16 @@ static json runCompute(wgpu::Device& device,
 static json executeShaderInternal(const std::string& source,
                                   const std::string& entryPoint,
                                   const std::string& buffersJson) {
-    dawnProcSetProcs(&dawn::native::GetProcs());
-    dawn::native::Instance instance;
-    auto adapters = instance.EnumerateAdapters();
-    if (adapters.empty()) throw std::runtime_error("No WebGPU adapters found");
-    wgpu::Adapter adapter(adapters[0].Get());
-
-    std::string deviceError;
-    wgpu::Device device = makeDevice(adapter, deviceError);
-    if (!device) throw std::runtime_error("Failed to create device");
+    ensureDawnReady();
+    g_device_error.clear();
 
     wgpu::ShaderModule shaderModule;
     std::string compileError;
-    if (!compileShader(device, source, shaderModule, compileError))
+    if (!compileShader(g_device, source, shaderModule, compileError))
         throw std::runtime_error(compileError);
-    if (!deviceError.empty()) throw std::runtime_error(deviceError);
+    if (!g_device_error.empty()) throw std::runtime_error(g_device_error);
 
-    return runCompute(device, shaderModule, entryPoint, parseBuffers(buffersJson));
+    return runCompute(g_device, shaderModule, entryPoint, parseBuffers(buffersJson));
 }
 
 // ── JNI entry point ───────────────────────────────────────────────────────────
@@ -277,20 +289,13 @@ int main(int argc, char* argv[]) {
 
     // Compile-only mode
     if (uniformPath.empty()) {
-        dawnProcSetProcs(&dawn::native::GetProcs());
-        dawn::native::Instance instance;
-        auto adapters = instance.EnumerateAdapters();
-        if (adapters.empty()) { std::cerr << "No WebGPU adapters found\n"; return 1; }
-        wgpu::Adapter adapter(adapters[0].Get());
-        std::string deviceError;
-        wgpu::Device device = makeDevice(adapter, deviceError);
-        if (!device) { std::cerr << "Failed to create device\n"; return 1; }
+        try { ensureDawnReady(); } catch (const std::exception& e) { std::cerr << e.what() << "\n"; return 1; }
         wgpu::ShaderModule shaderModule;
         std::string compileError;
-        if (!compileShader(device, source, shaderModule, compileError)) {
+        if (!compileShader(g_device, source, shaderModule, compileError)) {
             std::cerr << compileError; return 1;
         }
-        if (!deviceError.empty()) { std::cerr << deviceError << "\n"; return 1; }
+        if (!g_device_error.empty()) { std::cerr << g_device_error << "\n"; return 1; }
         return 0;
     }
 

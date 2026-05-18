@@ -4,21 +4,33 @@ project(wgsl_dawn_harness CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(SPE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
+
 # Paths to the wgslsmith Dawn build — override with -D flags if needed
 set(DAWN_SRC_DIR
-    "/Users/limxinyi/Desktop/Masters/Imperial/thesis/wgslsmith/external/dawn"
+    "${SPE_ROOT}/../wgslsmith/external/dawn"
     CACHE PATH "Dawn source root")
 set(DAWN_LIB_DIR
-    "/Users/limxinyi/Desktop/Masters/Imperial/thesis/wgslsmith/build/dawn/aarch64-apple-darwin/lib"
+    "${SPE_ROOT}/../wgslsmith/build/dawn/aarch64-apple-darwin/lib"
     CACHE PATH "Dawn lib directory (contains all .a files)")
 set(DAWN_GEN_INCLUDE_DIR
-    "/Users/limxinyi/Desktop/Masters/Imperial/thesis/wgslsmith/build/dawn/aarch64-apple-darwin/gen/include"
+    "${SPE_ROOT}/../wgslsmith/build/dawn/aarch64-apple-darwin/gen/include"
     CACHE PATH "Dawn generated include directory (webgpu.h, webgpu_cpp.h)")
 
-# ── Shared Dawn configuration ─────────────────────────────────────────────────
 set(DAWN_OUT_DIR
-    "/Users/limxinyi/Desktop/Masters/Imperial/thesis/wgslsmith/target/release/build/dawn-d52d2735c6d7f502/out"
+    "${SPE_ROOT}/../wgslsmith/target/release/build/dawn-d52d2735c6d7f502/out"
     CACHE PATH "Dawn generated out build directory")
+
+# Paths to Spirv-Tools build -- override with -D flags if needed
+set(SPIRV_TOOLS_INCLUDE_DIR
+    "${SPE_ROOT}/../spirv-tools/include"
+    CACHE PATH "Spirv-Tools generated include directory (libspirv.h{|pp}, optimizer.hpp)")
+
+set(SPIRV_TOOLS_LIB_DIR
+    "${SPE_ROOT}/../spirv-tools/build/source"
+    CACHE PATH "Spirv-Tools static library directory (libSPIRV-Tools.a, libSPIRV-Tools-opt.a)")
+
+# ── Shared Dawn configuration ─────────────────────────────────────────────────
 
 set(DAWN_INCLUDES
     ${DAWN_SRC_DIR}/include
@@ -186,33 +198,50 @@ set(APPLE_FRAMEWORKS
     "-framework Foundation"
 )
 
-# ── Standalone executable (debugging / compile-only checks) ───────────────────
-
 find_package(JNI REQUIRED)
 
-add_executable(dawn_harness dawn_harness.cpp)
-target_include_directories(dawn_harness PRIVATE ${JNI_INCLUDE_DIRS} ${DAWN_INCLUDES})
-target_link_directories(dawn_harness PRIVATE ${DAWN_LINK_DIRS})
+# ── Dawn INTERFACE library ────────────────────────────────────────────────────
+add_library(dawn_interface INTERFACE)
+target_include_directories(dawn_interface INTERFACE ${JNI_INCLUDE_DIRS} ${DAWN_INCLUDES})
+target_link_directories(dawn_interface INTERFACE ${DAWN_LINK_DIRS})
 
 if(APPLE)
-    target_link_libraries(dawn_harness PRIVATE ${DAWN_LIBS} ${APPLE_FRAMEWORKS})
+    target_link_libraries(dawn_interface INTERFACE ${DAWN_LIBS} ${APPLE_FRAMEWORKS})
 elseif(UNIX)
-    target_link_libraries(dawn_harness PRIVATE -Wl,--start-group ${DAWN_LIBS} ${LINUX_EXTRA_LIBS} -Wl,--end-group dl pthread)
+    target_link_libraries(dawn_interface INTERFACE -Wl,--start-group ${DAWN_LIBS} ${LINUX_EXTRA_LIBS} -Wl,--end-group dl pthread)
 endif()
 
-# ── JNI shared library (loaded by Kotlin via System.loadLibrary) ──────────────
+# ── SPIRV-Tools INTERFACE library ────────────────────────────────────────────
+
+add_library(spirv_interface INTERFACE)
+target_include_directories(spirv_interface INTERFACE ${JNI_INCLUDE_DIRS} ${SPIRV_TOOLS_INCLUDE_DIR})
+target_link_directories(spirv_interface INTERFACE ${SPIRV_TOOLS_LIB_DIR})
+target_link_libraries(spirv_interface INTERFACE SPIRV-Tools)
+
+# ── Dawn standalone executable ───────────────────────────────────────────────
+
+add_executable(dawn_harness dawn_harness.cpp)
+target_link_libraries(dawn_harness PRIVATE dawn_interface)
+
+# ── Dawn JNI shared library (loaded by Kotlin via System.loadLibrary) ─────────
 
 add_library(dawn_harness_jni SHARED dawn_harness.cpp)
-target_include_directories(dawn_harness_jni PRIVATE
-    ${JNI_INCLUDE_DIRS}
-    ${DAWN_INCLUDES}
-)
-target_link_directories(dawn_harness_jni PRIVATE ${DAWN_LINK_DIRS})
-
+target_link_libraries(dawn_harness_jni PRIVATE dawn_interface)
 if(APPLE)
-    target_link_libraries(dawn_harness_jni PRIVATE ${DAWN_LIBS} ${APPLE_FRAMEWORKS})
     # Let the JVM resolve JNI symbols at load time instead of link time
     target_link_options(dawn_harness_jni PRIVATE "-undefined dynamic_lookup")
-elseif(UNIX)
-    target_link_libraries(dawn_harness_jni PRIVATE -Wl,--start-group ${DAWN_LIBS} ${LINUX_EXTRA_LIBS} -Wl,--end-group dl pthread)
 endif()
+
+# ── SPIRV standalone executable ──────────────────────────────────────────────
+
+add_executable(spirv_harness spirv_harness.cpp)
+target_link_libraries(spirv_harness PRIVATE spirv_interface)
+
+# ── SPIRV JNI shared library (loaded by Kotlin via System.loadLibrary) ────────
+
+add_library(spirv_harness_jni SHARED spirv_harness.cpp)
+target_link_libraries(spirv_harness_jni PRIVATE spirv_interface)
+if(APPLE)
+    target_link_options(spirv_harness_jni PRIVATE "-undefined dynamic_lookup")
+endif()
+
