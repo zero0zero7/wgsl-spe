@@ -705,4 +705,33 @@ class ResolverTests {
         val tu = parseFromString(input, errorListener)
         val environment = resolve(tu)
     }
+
+    @Test
+    fun testLogicalNotOnBooleanVector() {
+        val input =
+            """
+            @compute
+            @workgroup_size(1, )
+            fn main()
+            {
+                let bool_vec = vec2<bool>(true, false); 
+                let bool_arr = array<bool, 2>(true, false); 
+                let arr = array<vec2<bool>, 2>(vec2<bool>(!bool_arr[0], !bool_vec.x), !bool_vec);
+            }
+            """.trimIndent()
+        val errorListener = LoggingParseErrorListener()
+        val tu = parseFromString(input, errorListener)
+        val environment = resolve(tu)
+
+        val fn = tu.globalDecls[0] as GlobalDecl.Function
+        val arrStmt = fn.body.statements[2] as Statement.Value
+        val arrayConstructor = arrStmt.initializer as Expression.ArrayValueConstructor
+
+        val notVec = arrayConstructor.args[1] as Expression.Unary
+        assertEquals(Type.Vector(2, Type.Bool), environment.typeOf(notVec))
+
+        val scope = environment.scopeAvailableAtEnd(fn.body)
+        val arrEntry = scope.getEntry("arr") as ScopeEntry.LocalValue
+        assertEquals(Type.Array(Type.Vector(2, Type.Bool), 2), arrEntry.type)
+    }
 }
