@@ -13,13 +13,14 @@ if [[ $# -ne 1 || "$1" == "-h" || "$1" == "--help" ]]; then
 fi
 
 SEED="$1"
-OUTDIR="output"
-GEN="$OUTDIR/gen${SEED}.wgsl"
-RC="$OUTDIR/gen${SEED}_rc.wgsl"
-LOG="$OUTDIR/${SEED}.log"
+SEEDDIR="output/$SEED"
+GEN="$SEEDDIR/gen.wgsl"
+RC="$SEEDDIR/rc.wgsl"
+LOG="$SEEDDIR/run.log"
 MYSMITH="/home/xyl25/mysmith/target/debug/wgslsmith"
+TIMEOUT="--timeout 120"
 
-mkdir -p "$OUTDIR"
+mkdir -p "$SEEDDIR"
 
 "$MYSMITH" gen "$SEED" > "$GEN"
 if [[ $? -ne 0 ]]; then
@@ -36,7 +37,7 @@ if [[ $? -ne 0 ]]; then
 fi
 echo "recondition OK -> $RC"
 
-OUTPUT=$("$MYSMITH" run --timeout 120 "$RC" 2>&1)
+OUTPUT=$("$MYSMITH" run $TIMEOUT "$RC" 2>&1)
 STATUS=$?
 
 if [[ $STATUS -eq 0 ]]; then
@@ -44,6 +45,6 @@ if [[ $STATUS -eq 0 ]]; then
     rm -f "$GEN" "$RC"
 else
     echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' > "$LOG"
-    echo "FAILED (seed=$SEED): output saved to $LOG" >&2
+    echo "FAILED (seed=$SEED): output saved to $SEEDDIR/" >&2
     exit 1
 fi
