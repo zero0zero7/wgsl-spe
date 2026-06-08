@@ -1,0 +1,55 @@
+#!/bin/bash
+
+TINT=/home/xyl25/dawn/out/Debug/tint
+GLSLANG=/home/xyl25/dawn/out/glslang-sanitized/glslang
+
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <wgsl-file>" >&2
+    exit 1
+fi
+
+WGSL_FILE="$1"
+
+if [ ! -f "$WGSL_FILE" ]; then
+    echo "File not found: $WGSL_FILE" >&2
+    exit 1
+fi
+
+BASENAME=$(basename "$WGSL_FILE" .wgsl)
+GLSL_OUT="${BASENAME}.glsl"
+LOG_FILE="glsl_${BASENAME}.log"
+
+TINT_OUTPUT=$("$TINT" --format glsl -o "$GLSL_OUT" "$WGSL_FILE" 2>&1)
+if [ $? -ne 0 ]; then
+    echo "tint failed:" >&2
+    echo "$TINT_OUTPUT" >&2
+    exit 1
+fi
+
+# tint may emit per-stage files like basename.vert.glsl, basename.comp.glsl
+mapfile -t GLSL_FILES < <(find . -maxdepth 1 -name "${BASENAME}*.glsl" 2>/dev/null | sort)
+
+if [ ${#GLSL_FILES[@]} -eq 0 ]; then
+    echo "No GLSL output found after tint" >&2
+    exit 1
+fi
+
+ALL_OK=1
+rm -f "$LOG_FILE"
+
+for GLSL_FILE in "${GLSL_FILES[@]}"; do
+    STAGE=vert
+    GLSLANG_OUTPUT=$("$GLSLANG" -S "$STAGE" "$GLSL_FILE" 2>&1)
+    if [ $? -eq 0 ]; then
+        rm -f "$GLSL_FILE"
+    else
+        ALL_OK=0
+        echo "=== $GLSL_FILE ===" >> "$LOG_FILE"
+        echo "$GLSLANG_OUTPUT" >> "$LOG_FILE"
+    fi
+done
+
+if [ $ALL_OK -eq 0 ]; then
+    echo "Validation failed — output written to $LOG_FILE" >&2
+    exit 1
+fi
