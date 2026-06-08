@@ -1,0 +1,49 @@
+#!/bin/bash
+
+usage() {
+    cat <<EOF
+Usage: genAndRun <seed>
+
+EOF
+}
+
+if [[ $# -ne 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+SEED="$1"
+OUTDIR="output"
+GEN="$OUTDIR/gen${SEED}.wgsl"
+RC="$OUTDIR/gen${SEED}_rc.wgsl"
+LOG="$OUTDIR/${SEED}.log"
+MYSMITH="/home/xyl25/mysmith/target/debug/wgslsmith"
+
+mkdir -p "$OUTDIR"
+
+"$MYSMITH" gen "$SEED" > "$GEN"
+if [[ $? -ne 0 ]]; then
+    echo "ERROR: gen failed" >&2
+    exit 1
+fi
+echo "gen OK -> $GEN"
+
+"$MYSMITH" recondition "$GEN" "$RC"
+if [[ $? -ne 0 ]]; then
+    echo "ERROR: recondition failed" >&2
+    rm -f "$GEN"
+    exit 1
+fi
+echo "recondition OK -> $RC"
+
+OUTPUT=$("$MYSMITH" run --timeout 120 "$RC" 2>&1)
+STATUS=$?
+
+if [[ $STATUS -eq 0 ]]; then
+    echo "run OK"
+    rm -f "$GEN" "$RC"
+else
+    echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' > "$LOG"
+    echo "FAILED (seed=$SEED): output saved to $LOG" >&2
+    exit 1
+fi
