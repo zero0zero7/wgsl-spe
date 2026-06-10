@@ -1,0 +1,65 @@
+#!/bin/bash
+# Generate, recondition, and run a single shader for one seed under one config.
+# Artifacts go to runs/<config>/<seed>/. On success the wgsl files are removed;
+# on failure they are kept alongside run.log for triage.
+set -u
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/common.sh"
+
+usage() {
+    cat <<EOF
+Usage: genAndRun <seed> [config]
+
+  seed    u64 seed for the generator
+  config  name of a file in configs/ (default: "default")
+EOF
+}
+
+if [[ $# -lt 1 || $# -gt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+SEED="$1"
+CONFIG="${2:-default}"
+load_config "$CONFIG" || exit 1
+
+SEEDDIR=$(run_dir "$CONFIG" "$SEED")
+GEN="$SEEDDIR/gen.wgsl"
+RC="$SEEDDIR/rc.wgsl"
+LOG="$SEEDDIR/run.log"
+
+# gen
+if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$GEN" 2>"$LOG"; then
+    echo "ERROR: gen failed (seed=$SEED)" >&2
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "gen-failed"
+    exit 1
+fi
+echo "gen OK -> $GEN"
+
+# recondition
+if ! "$WGSLSMITH" recondition "$GEN" "$RC" 2>"$LOG"; then
+    echo "ERROR: recondition failed (seed=$SEED)" >&2
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "recondition-failed"
+    exit 1
+fi
+echo "recondition OK -> $RC"
+
+# run
+RUN_ARGS=(run --timeout "$TIMEOUT")
+[[ -n "$CONFIGS" ]] && RUN_ARGS+=(-c "$CONFIGS")
+OUTPUT=$("$WGSLSMITH" "${RUN_ARGS[@]}" "$RC" 2>&1)
+STATUS=$?
+
+if [[ $STATUS -eq 0 ]]; then
+    echo "run OK"
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "pass" "none"
+    rm -f "$GEN" "$RC" "$LOG"
+else
+    echo "$OUTPUT" | strip_ansi > "$LOG"
+    CATEGORY=$(categorize < "$LOG")
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "fail" "$CATEGORY"
+    echo "FAILED (seed=$SEED, $CATEGORY): artifacts in $SEEDDIR/" >&2
+    exit 1
+fi

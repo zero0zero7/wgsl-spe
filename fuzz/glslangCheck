@@ -1,0 +1,129 @@
+#!/bin/bash
+# Generate + recondition a single shader, translate it to GLSL with BOTH tint
+# and naga, and validate each result with the sanitizer-instrumented glslang.
+# Artifacts go to runs/<config>/<seed>/. On full success they are removed; on
+# any failure they are kept alongside check.log for triage.
+#
+# This complements genAndRun: instead of executing the shader on the backends,
+# it stresses the WGSL->GLSL translators and the glslang front end.
+set -u
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/common.sh"
+
+usage() {
+    cat <<EOF
+Usage: glslangCheck <seed> [config]
+
+  seed    u64 seed for the generator
+  config  name of a file in configs/ (default: "default"); only GEN_FLAGS
+          is used here.
+
+wgslsmith generates wgsl shaders are always a single @compute entry point
+named main, so tint/naga/glslang are all driven in compute mode.
+EOF
+}
+
+if [[ $# -lt 1 || $# -gt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+SEED="$1"
+CONFIG="${2:-default}"
+load_config "$CONFIG" || exit 1
+
+for tool in "$WGSLSMITH" "$TINT" "$NAGA" "$GLSLANG"; do
+    if [[ ! -x "$tool" ]]; then
+        echo "ERROR: required tool not found or not executable: $tool" >&2
+        exit 1
+    fi
+done
+
+SEEDDIR=$(run_dir "$CONFIG" "$SEED")
+GEN="$SEEDDIR/gen.wgsl"
+RC="$SEEDDIR/rc.wgsl"
+TINT_GLSL="$SEEDDIR/tint.comp"
+NAGA_GLSL="$SEEDDIR/naga.comp"
+LOG="$SEEDDIR/check.log"
+: > "$LOG"
+
+fail() {
+    local category="$1"
+    echo "FAILED (seed=$SEED, $category): artifacts in $SEEDDIR/" >&2
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "fail" "$category"
+    exit 1
+}
+
+# gen
+if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$GEN" 2>>"$LOG"; then
+    echo "ERROR: gen failed (seed=$SEED)" >&2
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "gen-failed"
+    exit 1
+fi
+echo "gen OK -> $GEN"
+
+# recondition
+if ! "$WGSLSMITH" recondition "$GEN" "$RC" 2>>"$LOG"; then
+    echo "ERROR: recondition failed (seed=$SEED)" >&2
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "recondition-failed"
+    exit 1
+fi
+echo "recondition OK -> $RC"
+
+# Validate one GLSL file with glslang; returns glslang's exit status and
+# appends any diagnostics to the log under a labelled header.
+glslang_validate() {
+    local label="$1" file="$2" out
+    out=$("$GLSLANG" -S comp "$file" 2>&1)
+    local status=$?
+    if [[ $status -ne 0 ]]; then
+        { echo "=== glslang FAILED: $label ($file) ==="; echo "$out"; } >> "$LOG"
+    fi
+    return $status
+}
+
+# --- tint path: wgsl -> glsl -> glslang ---
+TINT_OK=0
+if TINT_ERR=$("$TINT" --format glsl -o "$TINT_GLSL" "$RC" 2>&1); then
+    if glslang_validate "tint" "$TINT_GLSL"; then
+        TINT_OK=1
+        echo "tint  -> glslang OK"
+    else
+        echo "tint  -> glslang FAIL"
+    fi
+else
+    { echo "=== tint translation FAILED ==="; echo "$TINT_ERR"; } >> "$LOG"
+    echo "tint translation FAIL"
+fi
+
+# --- naga path: wgsl -> glsl -> glslang ---
+# Match tint's GLSL ES 310 target so the two front-end runs are comparable.
+NAGA_OK=0
+if NAGA_ERR=$("$NAGA" "$RC" "$NAGA_GLSL" \
+        --shader-stage compute --entry-point main --profile es310 2>&1) \
+        && [[ -s "$NAGA_GLSL" ]]; then
+    if glslang_validate "naga" "$NAGA_GLSL"; then
+        NAGA_OK=1
+        echo "naga  -> glslang OK"
+    else
+        echo "naga  -> glslang FAIL"
+    fi
+else
+    { echo "=== naga translation FAILED ==="; echo "$NAGA_ERR"; } >> "$LOG"
+    echo "naga translation FAIL"
+fi
+
+# Categorise: distinguish which front end rejected the shader, since a
+# disagreement (one OK, one FAIL) is the most interesting signal.
+if [[ $TINT_OK -eq 1 && $NAGA_OK -eq 1 ]]; then
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "pass" "none"
+    rm -f "$GEN" "$RC" "$TINT_GLSL" "$NAGA_GLSL" "$LOG"
+    echo "PASS (seed=$SEED)"
+elif [[ $TINT_OK -eq 0 && $NAGA_OK -eq 0 ]]; then
+    fail "glslang-fail-both"
+elif [[ $TINT_OK -eq 0 ]]; then
+    fail "tint-glslang-fail"
+else
+    fail "naga-glslang-fail"
+fi

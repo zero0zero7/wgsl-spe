@@ -1,0 +1,145 @@
+#!/bin/bash
+# Run a per-seed runner over a range of seeds under one config, printing a
+# summary at the end. Individual failures don't stop the loop. The runner
+# defaults to genAndRun but can be switched to glslangCheck; both take the
+# same "<seed> [config]" arguments.
+#
+# Two stopping modes:
+#   count     run a fixed number of consecutive seeds
+#   duration  keep incrementing the seed until a wall-clock budget elapses
+#             (the usual way of running an evaluation for a fixed time)
+set -u
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+usage() {
+    cat <<EOF
+Usage:
+  runLoop [-r <runner>] <start_seed> <count> [config]
+  runLoop [-r <runner>] -d <duration> <start_seed> [config]
+
+  -r, --runner    per-seed script: genAndRun (default) or glslangCheck
+  -d, --duration  run until this wall-clock budget elapses instead of for a
+                  fixed count, e.g. 90s, 30m, 5h, 2d, 1h30m, or bare seconds
+  start_seed      first seed
+  count           how many consecutive seeds to run (count mode only)
+  config          name of a file in configs/ (default: "default")
+EOF
+}
+
+# Parse a duration like "5h", "1h30m", "90s", "2d", or a bare number of
+# seconds into a total number of seconds. Echoes the seconds, or returns 1.
+parse_duration() {
+    local spec="$1" total=0 num unit rest="$1"
+    if [[ "$spec" =~ ^[0-9]+$ ]]; then
+        echo "$spec"; return 0
+    fi
+    while [[ -n "$rest" ]]; do
+        if [[ "$rest" =~ ^([0-9]+)(d|h|hr|m|s)(.*)$ ]]; then
+            num="${BASH_REMATCH[1]}"
+            unit="${BASH_REMATCH[2]}"
+            rest="${BASH_REMATCH[3]}"
+            case "$unit" in
+                d)    total=$(( total + num * 86400 )) ;;
+                h|hr) total=$(( total + num * 3600 )) ;;
+                m)    total=$(( total + num * 60 )) ;;
+                s)    total=$(( total + num )) ;;
+            esac
+        else
+            return 1
+        fi
+    done
+    [[ $total -gt 0 ]] && { echo "$total"; return 0; } || return 1
+}
+
+# Format a number of seconds as Hh Mm Ss for the summary line.
+fmt_duration() {
+    local s="$1"
+    printf '%dh%02dm%02ds' $(( s / 3600 )) $(( (s % 3600) / 60 )) $(( s % 60 ))
+}
+
+RUNNER="genAndRun"
+DURATION_SPEC=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -r|--runner)
+            RUNNER="$2"
+            shift 2
+            ;;
+        -d|--duration)
+            DURATION_SPEC="$2"
+            shift 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [[ ! -x "$HERE/$RUNNER" ]]; then
+    echo "ERROR: no runner '$RUNNER' (expected executable $HERE/$RUNNER)" >&2
+    exit 1
+fi
+
+run_seed() {
+    local seed="$1"
+    echo "=== seed $seed ($CONFIG, $RUNNER) ==="
+    if "$HERE/$RUNNER" "$seed" "$CONFIG"; then
+        (( PASS++ )) || true
+    else
+        (( FAIL++ )) || true
+    fi
+}
+
+PASS=0
+FAIL=0
+
+if [[ -n "$DURATION_SPEC" ]]; then
+    # duration mode: runLoop -d <duration> <start_seed> [config]
+    if [[ $# -lt 1 || $# -gt 2 ]]; then
+        usage
+        exit 0
+    fi
+    DURATION=$(parse_duration "$DURATION_SPEC") || {
+        echo "ERROR: invalid duration '$DURATION_SPEC'" >&2
+        exit 1
+    }
+    START="$1"
+    CONFIG="${2:-default}"
+
+    START_TS=$(date +%s)
+    DEADLINE=$(( START_TS + DURATION ))
+    echo "Running $RUNNER for $(fmt_duration "$DURATION") from seed $START (config=$CONFIG)"
+
+    SEED="$START"
+    while (( $(date +%s) < DEADLINE )); do
+        run_seed "$SEED"
+        (( SEED++ ))
+    done
+
+    ELAPSED=$(( $(date +%s) - START_TS ))
+    LAST=$(( SEED - 1 ))
+    echo
+    echo "done: $PASS passed, $FAIL failed in $(fmt_duration "$ELAPSED")" \
+         "(seeds $START..$LAST, config=$CONFIG, runner=$RUNNER)"
+else
+    # count mode: runLoop <start_seed> <count> [config]
+    if [[ $# -lt 2 || $# -gt 3 ]]; then
+        usage
+        exit 0
+    fi
+    START="$1"
+    COUNT="$2"
+    CONFIG="${3:-default}"
+
+    for (( i=0; i<COUNT; i++ )); do
+        run_seed $(( START + i ))
+    done
+
+    echo
+    echo "done: $PASS passed, $FAIL failed (config=$CONFIG, runner=$RUNNER)"
+fi
