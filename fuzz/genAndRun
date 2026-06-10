@@ -24,6 +24,7 @@ fi
 SEED="$1"
 CONFIG="${2:-default}"
 load_config "$CONFIG" || exit 1
+require_tool WGSLSMITH wgslsmith || exit 1
 
 SEEDDIR=$(run_dir "$CONFIG" "$SEED")
 GEN="$SEEDDIR/gen.wgsl"

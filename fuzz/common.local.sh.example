@@ -1,0 +1,26 @@
+# Per-machine tool paths for the fuzz scripts.
+#
+# Copy this file to common.local.sh and uncomment/edit the lines you need:
+#
+#     cp fuzz/common.local.sh.example fuzz/common.local.sh
+#
+# common.local.sh is gitignored, so your local paths never get committed.
+# You only need entries for tools that are NOT already on your PATH -- if a
+# tool is on PATH, leave it commented out and it will be found automatically.
+#
+# Each value must be an executable binary (an absolute path is clearest).
+
+# wgslsmith: shader generator / reconditioner (needed by genAndRun + glslangCheck)
+# WGSLSMITH=/path/to/wgslsmith/target/release/wgslsmith
+
+# tint: Dawn's WGSL -> GLSL translator (needed by glslangCheck)
+# TINT=/path/to/dawn/out/Release/tint
+
+# naga: wgpu's shader translator CLI (needed by glslangCheck)
+# NAGA=/path/to/wgpu/target/release/naga
+
+# glslang: GLSL validator, ideally a sanitizer-instrumented build (needed by glslangCheck)
+# GLSLANG=/path/to/glslang/build/StandAlone/glslang
+
+# Optional: where to write run artifacts (default: <repo>/runs)
+# RUNS_DIR=/scratch/wgsl-spe-runs

@@ -5,15 +5,37 @@
 # Directory this file lives in, so paths work regardless of caller's cwd.
 COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Path to the wgslsmith binary. Override from the command line to test a
-# different build, e.g.  WGSLSMITH=/other/build/wgslsmith fuzz/genAndRun 8
-WGSLSMITH="${WGSLSMITH:-/home/xyl25/mysmith/target/debug/wgslsmith}"
+# Optional per-machine overrides (gitignored). Copy common.local.sh.example to
+# common.local.sh and set any tool paths that aren't on your PATH. Sourced
+# first so its assignments win the ${VAR:-...} fallbacks below.
+# shellcheck disable=SC1091
+[ -f "$COMMON_DIR/common.local.sh" ] && source "$COMMON_DIR/common.local.sh"
 
-# Shader-translation / validation tools used by glslangCheck. Each is
-# overridable from the environment the same way as WGSLSMITH above.
-TINT="${TINT:-/home/xyl25/dawn/out/Debug/tint}"
-NAGA="${NAGA:-/home/xyl25/mysmith/external/wgpu/target/debug/naga}"
-GLSLANG="${GLSLANG:-/home/xyl25/dawn/out/glslang-sanitized/glslang}"
+# External tools. Resolution order for each: an explicit environment variable
+# (or common.local.sh) wins; otherwise we search PATH. No absolute defaults are
+# baked in, so the repo carries no machine-specific paths. Tools are validated
+# lazily by require_tool, so a script only fails if a tool it actually uses is
+# missing.
+#   WGSLSMITH  generator/reconditioner (wgslsmith)        - genAndRun, glslangCheck
+#   TINT       Dawn's WGSL->GLSL translator (tint)        - glslangCheck
+#   NAGA       wgpu's shader translator (naga CLI)        - glslangCheck
+#   GLSLANG    sanitizer-built glslang validator          - glslangCheck
+WGSLSMITH="${WGSLSMITH:-$(command -v wgslsmith || true)}"
+TINT="${TINT:-$(command -v tint || true)}"
+NAGA="${NAGA:-$(command -v naga || true)}"
+GLSLANG="${GLSLANG:-$(command -v glslang || true)}"
+
+# Fail with a clear, actionable message if a required tool is missing.
+# Usage: require_tool VARNAME human-name
+require_tool() {
+    local var="$1" name="$2" val="${!1}"
+    if [[ -z "$val" || ! -x "$val" ]]; then
+        echo "ERROR: $name not found." >&2
+        echo "  Put it on your PATH, or set \$$var (e.g. export $var=/path/to/$name)," >&2
+        echo "  or add it to fuzz/common.local.sh (see fuzz/common.local.sh.example)." >&2
+        return 1
+    fi
+}
 
 # Root for all generated, disposable run artifacts (gitignored).
 RUNS_DIR="${RUNS_DIR:-$COMMON_DIR/../runs}"

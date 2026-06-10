@@ -33,12 +33,10 @@ SEED="$1"
 CONFIG="${2:-default}"
 load_config "$CONFIG" || exit 1
 
-for tool in "$WGSLSMITH" "$TINT" "$NAGA" "$GLSLANG"; do
-    if [[ ! -x "$tool" ]]; then
-        echo "ERROR: required tool not found or not executable: $tool" >&2
-        exit 1
-    fi
-done
+require_tool WGSLSMITH wgslsmith || exit 1
+require_tool TINT tint             || exit 1
+require_tool NAGA naga             || exit 1
+require_tool GLSLANG glslang       || exit 1
 
 SEEDDIR=$(run_dir "$CONFIG" "$SEED")
 GEN="$SEEDDIR/gen.wgsl"
