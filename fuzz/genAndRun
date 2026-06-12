@@ -47,9 +47,11 @@ if ! "$WGSLSMITH" recondition "$GEN" "$RC" 2>"$LOG"; then
 fi
 echo "recondition OK -> $RC"
 
-# run
+# run. CONFIGS is a space-separated list of backend IDs; each becomes its own
+# -c flag (wgslsmith's -c is repeatable, not comma/space separated). Empty =>
+# no -c => wgslsmith's platform defaults.
 RUN_ARGS=(run --timeout "$TIMEOUT")
-[[ -n "$CONFIGS" ]] && RUN_ARGS+=(-c "$CONFIGS")
+for cfg in $CONFIGS; do RUN_ARGS+=(-c "$cfg"); done
 OUTPUT=$("$WGSLSMITH" "${RUN_ARGS[@]}" "$RC" 2>&1)
 STATUS=$?
 

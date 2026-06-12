@@ -103,8 +103,10 @@ run_variant() {
     fi
 
     local out status
+    # CONFIGS is a space-separated list of backend IDs; each becomes its own -c
+    # flag (wgslsmith's -c is repeatable). Empty => defaults.
     local run_args=(run --timeout "$TIMEOUT")
-    [[ -n "$CONFIGS" ]] && run_args+=(-c "$CONFIGS")
+    for cfg in $CONFIGS; do run_args+=(-c "$cfg"); done
     out=$("$WGSLSMITH" "${run_args[@]}" "$rc" 2>&1)
     status=$?
 
