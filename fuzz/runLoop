@@ -18,7 +18,7 @@ Usage:
   runLoop [-r <runner>] <start_seed> <count> [config]
   runLoop [-r <runner>] -d <duration> <start_seed> [config]
 
-  -r, --runner    per-seed script: genAndRun (default) or glslangCheck
+  -r, --runner    per-seed script: genAndRun (default), glslangCheck, or skeletalRun
   -d, --duration  run until this wall-clock budget elapses instead of for a
                   fixed count, e.g. 90s, 30m, 5h, 2d, 1h30m, or bare seconds
   start_seed      first seed

@@ -5,6 +5,12 @@
 # Directory this file lives in, so paths work regardless of caller's cwd.
 COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Repository root and its Gradle wrapper, used by runners that drive JVM tools
+# (e.g. skeletalRun -> printSkeletalPrograms). Gradle must be invoked from the
+# repo root, hence the absolute path.
+REPO_ROOT="$(cd "$COMMON_DIR/.." && pwd)"
+GRADLEW="$REPO_ROOT/gradlew"
+
 # Optional per-machine overrides (gitignored). Copy common.local.sh.example to
 # common.local.sh and set any tool paths that aren't on your PATH. Sourced
 # first so its assignments win the ${VAR:-...} fallbacks below.
@@ -52,6 +58,12 @@ load_config() {
     CONFIGS=""        # value for `run -c` (empty = backend defaults: both)
     TIMEOUT=120       # per-execution timeout in seconds (0 disables)
     GEN_FLAGS=""      # extra flags passed to `gen`
+    SKELETONS="${SKELETONS:-8}"   # random skeletons per shader (skeletalRun only;
+                                  # honors an env override, e.g. SKELETONS=20 ...)
+    PARSE_TIMEOUT="${PARSE_TIMEOUT:-60000}"  # ms budget for the JVM tool to parse a
+                                  # shader (skeletalRun); raw wgslsmith output is
+                                  # often slow to parse, so this exceeds the 10s
+                                  # tool default. Honors an env override.
 
     local file="$COMMON_DIR/configs/$name.env"
     if [[ ! -f "$file" ]]; then

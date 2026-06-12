@@ -1,0 +1,147 @@
+#!/bin/bash
+# Generate one shader, enumerate SKELETONS random skeletal variants of it, then
+# recondition and run each variant (and the original) through wgslsmith. This
+# multiplies the test surface per generated shader: a single seed yields the
+# original plus N variants that swap in-scope variables into candidate usages.
+#
+# Pipeline (per seed):
+#   wgslsmith gen              -> gen.wgsl
+#   printSkeletalPrograms      -> skeleton_000.wgsl ... (random, --limit N)
+#   for each {gen.wgsl, skeleton_*}:
+#       wgslsmith recondition  -> rc
+#       wgslsmith run          rc
+#
+# Artifacts go to runs/<config>/<seed>/. On full success they are removed; any
+# variant that fails (or fails to recondition) is kept alongside its log.
+#
+# The number of variants is SKELETONS (default 8), overridable from the
+# environment: SKELETONS=20 fuzz/skeletalRun 42
+set -u
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/common.sh"
+
+usage() {
+    cat <<EOF
+Usage: skeletalRun <seed> [config]
+
+  seed    u64 seed for the generator
+  config  name of a file in configs/ (default: "default")
+
+Env:
+  SKELETONS       number of random skeletons per shader (default: 8)
+  PARSE_TIMEOUT   ms budget for the JVM tool to parse a shader (default: 60000;
+                  raw wgslsmith output is often slow to parse)
+EOF
+}
+
+if [[ $# -lt 1 || $# -gt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+SEED="$1"
+CONFIG="${2:-default}"
+load_config "$CONFIG" || exit 1
+require_tool WGSLSMITH wgslsmith || exit 1
+if [[ ! -x "$GRADLEW" ]]; then
+    echo "ERROR: gradle wrapper not found/executable: $GRADLEW" >&2
+    exit 1
+fi
+
+SEEDDIR=$(run_dir "$CONFIG" "$SEED")
+GEN="$SEEDDIR/gen.wgsl"
+SKEL_DIR="$SEEDDIR/skeletons"
+LOG="$SEEDDIR/run.log"
+: > "$LOG"
+
+# gen
+if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$GEN" 2>"$LOG"; then
+    echo "ERROR: gen failed (seed=$SEED)" >&2
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "gen-failed"
+    exit 1
+fi
+echo "gen OK -> $GEN"
+
+# enumerate random skeletons via the JVM tool. printSkeletalPrograms writes to
+# <output-dir>/<shaderBasename>/skeleton_NNN.wgsl, i.e. $SKEL_DIR/gen/ here.
+rm -rf "$SKEL_DIR"
+ENUM_OUT=$(cd "$REPO_ROOT" && "$GRADLEW" -q printSkeletalPrograms \
+    --args="--shader $GEN --random --limit $SKELETONS --parse-timeout $PARSE_TIMEOUT --output-dir $SKEL_DIR" 2>&1)
+if [[ $? -ne 0 ]]; then
+    echo "ERROR: enumeration failed (seed=$SEED)" >&2
+    echo "$ENUM_OUT" >> "$LOG"
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "enumerate-failed"
+    exit 1
+fi
+
+# Build the list of variants to test: the original generated shader first,
+# then every enumerated skeleton (sorted for stable numbering).
+VARIANTS=("$GEN")
+mapfile -t SKELS < <(find "$SKEL_DIR" -name 'skeleton_*.wgsl' 2>/dev/null | sort)
+VARIANTS+=("${SKELS[@]}")
+echo "enumerated ${#SKELS[@]} skeleton(s) -> testing ${#VARIANTS[@]} variant(s)"
+
+# Run one variant: recondition then execute. Returns 0 on pass. On failure,
+# keeps the variant's .wgsl + .rc.wgsl and writes a per-variant <name>.log.
+PASS=0
+FAIL=0
+FAIL_CATEGORY=""
+FAIL_NAME=""
+
+run_variant() {
+    local src="$1"
+    local name; name=$(basename "$src" .wgsl)
+    local rc="$SEEDDIR/${name}.rc.wgsl"
+    local vlog="$SEEDDIR/${name}.log"
+
+    if ! "$WGSLSMITH" recondition "$src" "$rc" 2>"$vlog"; then
+        echo "  $name: recondition FAIL"
+        (( FAIL++ )) || true
+        [[ -z "$FAIL_CATEGORY" ]] && { FAIL_CATEGORY="recondition-failed"; FAIL_NAME="$name"; }
+        return 1
+    fi
+
+    local out status
+    local run_args=(run --timeout "$TIMEOUT")
+    [[ -n "$CONFIGS" ]] && run_args+=(-c "$CONFIGS")
+    out=$("$WGSLSMITH" "${run_args[@]}" "$rc" 2>&1)
+    status=$?
+
+    if [[ $status -eq 0 ]]; then
+        echo "  $name: run OK"
+        rm -f "$rc" "$vlog"
+        (( PASS++ )) || true
+        return 0
+    else
+        echo "$out" | strip_ansi > "$vlog"
+        local cat; cat=$(categorize < "$vlog")
+        echo "  $name: run FAIL ($cat)"
+        (( FAIL++ )) || true
+        if [[ -z "$FAIL_CATEGORY" ]]; then
+            FAIL_CATEGORY="$cat"
+            FAIL_NAME="$name"
+        fi
+        return 1
+    fi
+}
+
+for v in "${VARIANTS[@]}"; do
+    run_variant "$v"
+done
+
+echo "variants: $PASS passed, $FAIL failed"
+
+if [[ $FAIL -eq 0 ]]; then
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "pass" "none"
+    rm -rf "$SKEL_DIR"
+    rm -f "$GEN" "$LOG"
+    echo "PASS (seed=$SEED)"
+else
+    # Keep everything for triage: the original gen.wgsl, the enumeration tree
+    # (failing skeletons live there), and each failing variant's .rc.wgsl/.log.
+    # Passing variants already had their rc/log removed in run_variant.
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "fail" "${FAIL_CATEGORY}:${FAIL_NAME}"
+    echo "FAILED (seed=$SEED, $FAIL_CATEGORY in $FAIL_NAME): artifacts in $SEEDDIR/" >&2
+    exit 1
+fi
