@@ -1,11 +1,14 @@
 package com.wgslspe.tools
 
+import com.wgslfuzz.core.AstNode
 import com.wgslfuzz.core.AstWriter
 import com.wgslfuzz.core.BufferInfo
+import com.wgslfuzz.core.SourceSpan
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.collectSkeletalCandidates
 import com.wgslspe.core.allReplacementSkeletons
 import com.wgslspe.core.getSkeletons
+import com.wgslspe.core.getSkeletonEdits
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
@@ -34,6 +37,35 @@ private fun emitSkeleton(skeleton: com.wgslfuzz.core.TranslationUnit, file: File
     val buffer = ByteArrayOutputStream()
     AstWriter(out = PrintStream(buffer)).emit(skeleton)
     file.writeText(TRAILING_COMMA.replace(buffer.toString(Charsets.UTF_8.name()), ""))
+}
+
+/**
+ * Format-preserving emitter (used by --preserve-format). Produces a skeleton by
+ * splicing each replacement name over its usage's [SourceSpan] in the *original*
+ * source text, leaving every other byte untouched. The output is therefore in
+ * the input's exact dialect (wgslsmith's), which `recondition`/`run` accept.
+ *
+ * Edits are applied in descending start offset so earlier splices don't shift
+ * the offsets of later ones; usage tokens are non-overlapping. Assumes the
+ * source is ASCII (so ANTLR char offsets == String indices), which holds for
+ * wgslsmith output. A usage lacking a [SourceSpan] is skipped with a warning.
+ */
+private fun spliceSkeleton(originalText: String, edits: List<Pair<AstNode, String>>, file: File) {
+    val spans = edits.mapNotNull { (node, newName) ->
+        val span = node.metadata.filterIsInstance<SourceSpan>().firstOrNull()
+        if (span == null) {
+            System.err.println("WARNING: usage node has no SourceSpan; skipping a replacement in ${file.name}")
+            null
+        } else {
+            Triple(span.start, span.stopInclusive, newName)
+        }
+    }.sortedByDescending { it.first }
+
+    val sb = StringBuilder(originalText)
+    for ((start, stopInclusive, newName) in spans) {
+        sb.replace(start, stopInclusive + 1, newName) // end index is exclusive
+    }
+    file.writeText(sb.toString())
 }
 
 fun main(args: Array<String>) {
@@ -80,6 +112,15 @@ fun main(args: Array<String>) {
             fullName = "parse-timeout",
             description = "Timeout in milliseconds for parsing the input shader (default: 10000)",
         ).default(10000)
+
+    val preserveFormat by parser
+        .option(
+            ArgType.Boolean,
+            fullName = "preserve-format",
+            description = "Emit skeletons by splicing replacements into the original text " +
+                "(preserves the input's exact formatting/dialect) instead of re-serializing " +
+                "via AstWriter (default: false)",
+        ).default(false)
     parser.parse(args)
 
     val shaderName = File(shaderPath).nameWithoutExtension
@@ -100,7 +141,8 @@ fun main(args: Array<String>) {
             emptyList()
         }
 
-    val shaderJob = createShaderJob(shaderFile.readText(), uniformBuffers, timeoutMilliseconds = parseTimeout)
+    val shaderText = shaderFile.readText()
+    val shaderJob = createShaderJob(shaderText, uniformBuffers, timeoutMilliseconds = parseTimeout)
     val tu = shaderJob.tu
     val env = shaderJob.environment
 
@@ -108,17 +150,30 @@ fun main(args: Array<String>) {
     println("// Input: $shaderPath")
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
-    if (usages.isNotEmpty()) {
-        val maxSkeletons = limit ?: Int.MAX_VALUE
-        val skeletons = getSkeletons(tu, env, n=maxSkeletons, random=random)
+    if (usages.isEmpty()) {
+        println("No usages found")
+        return
+    }
+
+    val maxSkeletons = limit ?: Int.MAX_VALUE
+
+    if (preserveFormat) {
+        // Format-preserving mode: splice replacements into the original text.
+        val edits = getSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+        for ((idx, editCharVect) in edits.take(maxSkeletons).withIndex()) {
+            val (editList, charVect) = editCharVect
+            val fileName = "skeleton_%03d.wgsl".format(idx)
+            println("$fileName, $charVect")
+            spliceSkeleton(shaderText, editList, File(outDir, fileName))
+        }
+    } else {
+        // Default mode: re-serialize each skeleton via AstWriter.
+        val skeletons = getSkeletons(tu, env, n = maxSkeletons, random = random)
         for ((idx, skeleton_charVect) in skeletons.take(maxSkeletons).withIndex()) {
             val (skeleton, charVect) = skeleton_charVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
             emitSkeleton(skeleton, File(outDir, fileName))
         }
-    }
-    else {
-        println("No usages found")
     }
 }
