@@ -32,6 +32,8 @@ Env:
   SKELETONS       number of random skeletons per shader (default: 8)
   PARSE_TIMEOUT   ms budget for the JVM tool to parse a shader (default: 60000;
                   raw wgslsmith output is often slow to parse)
+  PRESERVE_FORMAT 1 (default) = splice replacements into the original text,
+                  keeping wgslsmith's dialect; 0 = re-serialize via AstWriter
 EOF
 }
 
@@ -66,8 +68,14 @@ echo "gen OK -> $GEN"
 # enumerate random skeletons via the JVM tool. printSkeletalPrograms writes to
 # <output-dir>/<shaderBasename>/skeleton_NNN.wgsl, i.e. $SKEL_DIR/gen/ here.
 rm -rf "$SKEL_DIR"
+# With PRESERVE_FORMAT=1 (default), --preserve-format splices replacements into
+# the original text instead of re-serializing via AstWriter, so the skeletons
+# stay in wgslsmith's dialect and reconditioning/running them works (see
+# fuzz/INTEGRATION_NOTES.md S6). Set PRESERVE_FORMAT=0 for the AstWriter path.
+PRESERVE_FLAG=""
+[[ "$PRESERVE_FORMAT" != "0" ]] && PRESERVE_FLAG="--preserve-format"
 ENUM_OUT=$(cd "$REPO_ROOT" && "$GRADLEW" -q printSkeletalPrograms \
-    --args="--shader $GEN --random --limit $SKELETONS --parse-timeout $PARSE_TIMEOUT --output-dir $SKEL_DIR" 2>&1)
+    --args="--shader $GEN --random --limit $SKELETONS --parse-timeout $PARSE_TIMEOUT $PRESERVE_FLAG --output-dir $SKEL_DIR" 2>&1)
 if [[ $? -ne 0 ]]; then
     echo "ERROR: enumeration failed (seed=$SEED)" >&2
     echo "$ENUM_OUT" >> "$LOG"

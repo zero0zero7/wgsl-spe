@@ -282,6 +282,47 @@ fun getSkeletons(
 }
 
 /**
+ * Like [getSkeletons], but instead of producing a re-serialized [TranslationUnit]
+ * per skeleton, yields the list of *edits* to apply to the original source text.
+ * Each edit is (the original usage node, the replacement variable name). The
+ * usage node carries a [com.wgslfuzz.core.SourceSpan] (attached at parse time),
+ * so a caller can splice the new name over that span in the original text and
+ * leave every other byte — and therefore the input's exact dialect/formatting —
+ * intact. This avoids the [com.wgslfuzz.core.AstWriter] round-trip, which would
+ * re-emit the whole program in a dialect wgslsmith's parser rejects.
+ *
+ * The original [getSkeletons] is unchanged; this is an additional entry point.
+ */
+fun getSkeletonEdits(
+    tu: TranslationUnit,
+    env: ResolvedEnvironment,
+    n: Int = Int.MAX_VALUE,
+    random: Boolean = true,
+): Sequence<Pair<List<Pair<AstNode, String>>, List<String>>> {
+    val (_, usages) = collectSkeletalCandidates(tu, env)
+    if (usages.isEmpty()) return emptySequence()
+
+    val choices: List<List<Pair<AstNode, AstNode>>> = usages
+        .map { (node, concreteType, scope, overrides) ->
+            suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
+        }
+        .filter { it.isNotEmpty() }
+
+    val combinations =
+        if (random) {
+            generateSequence { getRandomCombination(choices) }.distinctBy { it.second }.take(n)
+        } else {
+            enumerateCombinations(choices).take(n)
+        }
+
+    // combination[i].first is the original usage node for usage i; charVect[i] is
+    // its chosen replacement name — both indexed in the same usage order.
+    return combinations.map { (combination, charVect) ->
+        combination.mapIndexed { i, pair -> pair.first to charVect[i] } to charVect
+    }
+}
+
+/**
  * Lazily enumerates (hence Sequence over List) all skeletal variants of [tu] produced by simultaneously replacing between
  * 1 and [maxReplacements] candidate expressions with in-scope variables of matching type.
  *

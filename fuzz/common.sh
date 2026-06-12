@@ -64,6 +64,10 @@ load_config() {
                                   # shader (skeletalRun); raw wgslsmith output is
                                   # often slow to parse, so this exceeds the 10s
                                   # tool default. Honors an env override.
+    PRESERVE_FORMAT="${PRESERVE_FORMAT:-1}"  # 1 = emit skeletons by splicing into
+                                  # the original text (keeps wgslsmith's dialect);
+                                  # 0 = re-serialize via AstWriter (skeletalRun
+                                  # only). Honors an env override.
 
     local file="$COMMON_DIR/configs/$name.env"
     if [[ ! -f "$file" ]]; then
