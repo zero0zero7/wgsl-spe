@@ -15,6 +15,26 @@ import java.io.File
 import java.io.PrintStream
 import kotlin.system.exitProcess
 import java.io.FileOutputStream
+import java.io.ByteArrayOutputStream
+
+/**
+ * AstWriter always emits a trailing comma after the last element of argument
+ * lists, vec/array constructors, switch-case selector lists, etc. That is valid
+ * WGSL, but wgslsmith's (stricter) parser rejects a comma immediately before
+ * `)`, `]`, `>` or a case `:`. Since skeletons produced here are fed back into
+ * wgslsmith (recondition/run), strip those trailing commas so the two tools
+ * interoperate. WGSL has no string/char literals, so a textual pass is safe.
+ *
+ * NB: `}` is deliberately excluded -- wgslsmith both emits and requires the
+ * trailing comma in struct bodies (`d: f32,\n}`), so it must be kept.
+ */
+private val TRAILING_COMMA = Regex(",\\s*(?=[)\\]>:])")
+
+private fun emitSkeleton(skeleton: com.wgslfuzz.core.TranslationUnit, file: File) {
+    val buffer = ByteArrayOutputStream()
+    AstWriter(out = PrintStream(buffer)).emit(skeleton)
+    file.writeText(TRAILING_COMMA.replace(buffer.toString(Charsets.UTF_8.name()), ""))
+}
 
 fun main(args: Array<String>) {
     val parser = ArgParser("wgsl skeletal program enumerator")
@@ -40,12 +60,26 @@ fun main(args: Array<String>) {
             description = "Maximum number of simultaneous replacements per skeleton (default: 1)",
         ).default(Int.MAX_VALUE)
 
+    val random by parser
+        .option(
+            ArgType.Boolean,
+            fullName = "random",
+            description = "Randomly sample --limit skeletons instead of enumerating in order (default: false)",
+        ).default(false)
+
     val outputDir by parser
         .option(
             ArgType.String,
             fullName = "output-dir",
             description = "Directory to write each skeleton as a numbered .wgsl file (optional)",
         ).default("out")
+
+    val parseTimeout by parser
+        .option(
+            ArgType.Int,
+            fullName = "parse-timeout",
+            description = "Timeout in milliseconds for parsing the input shader (default: 10000)",
+        ).default(10000)
     parser.parse(args)
 
     val shaderName = File(shaderPath).nameWithoutExtension
@@ -66,7 +100,7 @@ fun main(args: Array<String>) {
             emptyList()
         }
 
-    val shaderJob = createShaderJob(shaderFile.readText(), uniformBuffers)
+    val shaderJob = createShaderJob(shaderFile.readText(), uniformBuffers, timeoutMilliseconds = parseTimeout)
     val tu = shaderJob.tu
     val env = shaderJob.environment
 
@@ -75,13 +109,13 @@ fun main(args: Array<String>) {
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
     if (usages.isNotEmpty()) {
-        val skeletons = getSkeletons(tu, env, random=false)
         val maxSkeletons = limit ?: Int.MAX_VALUE
+        val skeletons = getSkeletons(tu, env, n=maxSkeletons, random=random)
         for ((idx, skeleton_charVect) in skeletons.take(maxSkeletons).withIndex()) {
             val (skeleton, charVect) = skeleton_charVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
-            AstWriter(out = PrintStream(FileOutputStream(File(outDir, fileName)))).emit(skeleton)
+            emitSkeleton(skeleton, File(outDir, fileName))
         }
     }
     else {
