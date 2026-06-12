@@ -6,13 +6,18 @@
 #
 # Pipeline (per seed):
 #   wgslsmith gen              -> gen.wgsl
+#   recondition + run gen.wgsl                 (the BASELINE)
+#     - if the baseline fails, the seed is marked baseline-fail and we stop
+#       here: a broken original makes every skeleton failure uninterpretable,
+#       so enumeration (the expensive JVM step) is skipped.
 #   printSkeletalPrograms      -> skeleton_000.wgsl ... (random, --limit N)
-#   for each {gen.wgsl, skeleton_*}:
+#   for each skeleton_*:
 #       wgslsmith recondition  -> rc
 #       wgslsmith run          rc
 #
 # Artifacts go to runs/<config>/<seed>/. On full success they are removed; any
-# variant that fails (or fails to recondition) is kept alongside its log.
+# variant that fails (or fails to recondition), or a failing baseline, is kept
+# alongside its log.
 #
 # The number of variants is SKELETONS (default 8), overridable from the
 # environment: SKELETONS=20 fuzz/skeletalRun 42
@@ -65,33 +70,9 @@ if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$GEN" 2>"$LOG"; then
 fi
 echo "gen OK -> $GEN"
 
-# enumerate random skeletons via the JVM tool. printSkeletalPrograms writes to
-# <output-dir>/<shaderBasename>/skeleton_NNN.wgsl, i.e. $SKEL_DIR/gen/ here.
-rm -rf "$SKEL_DIR"
-# With PRESERVE_FORMAT=1 (default), --preserve-format splices replacements into
-# the original text instead of re-serializing via AstWriter, so the skeletons
-# stay in wgslsmith's dialect and reconditioning/running them works (see
-# fuzz/INTEGRATION_NOTES.md S6). Set PRESERVE_FORMAT=0 for the AstWriter path.
-PRESERVE_FLAG=""
-[[ "$PRESERVE_FORMAT" != "0" ]] && PRESERVE_FLAG="--preserve-format"
-ENUM_OUT=$(cd "$REPO_ROOT" && "$GRADLEW" -q printSkeletalPrograms \
-    --args="--shader $GEN --random --limit $SKELETONS --parse-timeout $PARSE_TIMEOUT $PRESERVE_FLAG --output-dir $SKEL_DIR" 2>&1)
-if [[ $? -ne 0 ]]; then
-    echo "ERROR: enumeration failed (seed=$SEED)" >&2
-    echo "$ENUM_OUT" >> "$LOG"
-    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "enumerate-failed"
-    exit 1
-fi
-
-# Build the list of variants to test: the original generated shader first,
-# then every enumerated skeleton (sorted for stable numbering).
-VARIANTS=("$GEN")
-mapfile -t SKELS < <(find "$SKEL_DIR" -name 'skeleton_*.wgsl' 2>/dev/null | sort)
-VARIANTS+=("${SKELS[@]}")
-echo "enumerated ${#SKELS[@]} skeleton(s) -> testing ${#VARIANTS[@]} variant(s)"
-
 # Run one variant: recondition then execute. Returns 0 on pass. On failure,
 # keeps the variant's .wgsl + .rc.wgsl and writes a per-variant <name>.log.
+# Defined before the baseline run below so enumeration can be gated on it.
 PASS=0
 FAIL=0
 FAIL_CATEGORY=""
@@ -136,7 +117,41 @@ run_variant() {
     fi
 }
 
-for v in "${VARIANTS[@]}"; do
+# Baseline gating: run the original (unmutated) shader first. If it already
+# fails to recondition/run, every skeleton would just inherit that breakage and
+# tell us nothing about the variable swaps -- so mark the seed baseline-fail and
+# skip enumeration entirely (it's the expensive JVM step). gen.wgsl + its
+# .rc.wgsl/.log are kept for triage (run_variant retains them on failure).
+if ! run_variant "$GEN"; then
+    echo "baseline FAILED (seed=$SEED, $FAIL_CATEGORY): skipping skeletons" >&2
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "baseline-fail" "${FAIL_CATEGORY}:gen"
+    exit 1
+fi
+
+# Baseline passed -> enumerate random skeletons via the JVM tool.
+# printSkeletalPrograms writes to <output-dir>/skeleton_NNN.wgsl.
+rm -rf "$SKEL_DIR"
+# With PRESERVE_FORMAT=1 (default), --preserve-format splices replacements into
+# the original text instead of re-serializing via AstWriter, so the skeletons
+# stay in wgslsmith's dialect and reconditioning/running them works (see
+# fuzz/INTEGRATION_NOTES.md S6). Set PRESERVE_FORMAT=0 for the AstWriter path.
+PRESERVE_FLAG=""
+[[ "$PRESERVE_FORMAT" != "0" ]] && PRESERVE_FLAG="--preserve-format"
+ENUM_OUT=$(cd "$REPO_ROOT" && "$GRADLEW" -q printSkeletalPrograms \
+    --args="--shader $GEN --random --limit $SKELETONS --parse-timeout $PARSE_TIMEOUT $PRESERVE_FLAG --output-dir $SKEL_DIR" 2>&1)
+if [[ $? -ne 0 ]]; then
+    echo "ERROR: enumeration failed (seed=$SEED)" >&2
+    echo "$ENUM_OUT" >> "$LOG"
+    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "enumerate-failed"
+    exit 1
+fi
+
+# The skeletons to test (sorted for stable numbering). The original already ran
+# above as the baseline, so it is not in this list.
+mapfile -t SKELS < <(find "$SKEL_DIR" -name 'skeleton_*.wgsl' 2>/dev/null | sort)
+echo "enumerated ${#SKELS[@]} skeleton(s) -> testing baseline + ${#SKELS[@]} skeleton(s)"
+
+for v in "${SKELS[@]}"; do
     run_variant "$v"
 done
 
