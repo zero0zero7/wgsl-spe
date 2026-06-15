@@ -10,8 +10,10 @@
 #
 # Each value must be an executable binary (an absolute path is clearest).
 
+# MYSMITH="/path/to/mysmith/target/debug/wgslsmith"
+
 # wgslsmith: shader generator / reconditioner (needed by genAndRun + glslangCheck)
-# WGSLSMITH=/path/to/wgslsmith/target/release/wgslsmith
+# WGSLSMITH="$MYSMITH/target/debug/wgslsmith"
 
 # tint: Dawn's WGSL -> GLSL translator (needed by glslangCheck)
 # TINT=/path/to/dawn/out/Release/tint
@@ -24,3 +26,24 @@
 
 # Optional: where to write run artifacts (default: <repo>/runs)
 # RUNS_DIR=/scratch/wgsl-spe-runs
+
+# --- Backend config IDs (machine-specific) ---------------------------------
+# wgslsmith identifies each backend by an ID of the form <impl>:<backend>:<adapter>
+# (e.g. dawn:vk:9654). The adapter part depends on this machine's GPUs/harness,
+# so run `wgslsmith harness list` to see what's available here, then define the
+# IDs you use as CFG_* variables below. Your local configs/<name>.env can then
+# reference them symbolically (e.g. CONFIGS="$CFG_NVIDIA_DAWN $CFG_NVIDIA_WGPU"),
+# so when an adapter ID changes you edit it once here, not in every config.
+# These are sourced before configs/*.env, so the variables are in scope there.
+# CFG_NVIDIA_DAWN=dawn:vk:9654     # NVIDIA A16 via Dawn/Tint
+# CFG_NVIDIA_WGPU=wgpu:vk:9654     # NVIDIA A16 via wgpu/naga
+# CFG_SW_DAWN=dawn:vk:49374        # SwiftShader (software) via Dawn/Tint
+# CFG_SW_WGPU=wgpu:vk:49374        # SwiftShader (software) via wgpu/naga
+
+
+# --- Execution config ----
+# LSAN_OPTIONS=suppressions and ASAN_OPTIONS=detect_leaks=0 are mutually exclusive
+# export LSAN_OPTIONS=suppressions=/vol/bitbucket/xyl25/mysmith/lsan.supp
+export ASAN_OPTIONS=detect_leaks=0
+export RUST_BACKTRACE=1
+# export LD_LIBRARY_PATH="$MYSMITH/libs:$LD_LIBRARY_PATH"

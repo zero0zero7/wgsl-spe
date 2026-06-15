@@ -99,11 +99,49 @@ Configs live in `configs/<name>.env` and are selected by name (default:
 | `TIMEOUT`   | per-execution timeout in seconds (`0` disables). Used by `genAndRun`. |
 | `GEN_FLAGS` | extra flags passed to `wgslsmith gen`. Used by both runners.        |
 
-Provided configs:
+Only `default` is shipped in the repo (`CONFIGS=""`, i.e. wgslsmith's platform
+defaults — portable to any machine). Every other config is **machine-specific**
+and lives only on your machine, because the backend IDs in `CONFIGS` depend on
+the GPUs/harness present. `configs/*.env` is gitignored except `default.env`.
 
-- `default` — all backend defaults (`dawn:vk` and `wgpu:vk`).
-- `dawn-only` — Dawn/Tint backend only, on SwiftShader.
-- `naga-only` — wgpu/naga backend only, on SwiftShader.
+### Creating your own configs
+
+The backend IDs come from `wgslsmith harness list`, e.g.:
+
+```
+dawn:vk:9654 | NVIDIA A16
+dawn:vk:0    | llvmpipe (LLVM 20.1.2, 256 bits)
+```
+
+Rather than hardcoding those IDs in every config, define them **once** as
+`CFG_*` variables in `common.local.sh` (gitignored), then reference them
+symbolically from your configs. `common.local.sh` is sourced before any config,
+so the variables are in scope. Copy the template to get started:
+
+```bash
+cp fuzz/common.local.sh.example fuzz/common.local.sh   # has a CFG_* section
+```
+
+```bash
+# fuzz/common.local.sh
+CFG_NVIDIA_DAWN=dawn:vk:9654
+CFG_NVIDIA_WGPU=wgpu:vk:9654
+```
+
+```bash
+# fuzz/configs/nvidia.env  (local, gitignored)
+CONFIGS="$CFG_NVIDIA_DAWN $CFG_NVIDIA_WGPU"   # compare Dawn vs wgpu on the A16
+TIMEOUT=120
+GEN_FLAGS=""
+```
+
+Now an adapter-ID change is a one-line edit in `common.local.sh` rather than a
+hunt through every config. Two forms are useful when referencing a `CFG_*`:
+
+- `"${CFG_SW_DAWN:-dawn:vk:49374}"` — fall back to a literal if unset (the
+  shipped `dawn-only`/`naga-only` examples use this so they work out-of-box).
+- `"${CFG_NVIDIA_DAWN:?define CFG_NVIDIA_DAWN in common.local.sh}"` — fail fast
+  with a clear message if you forgot to define it (scripts run under `set -u`).
 
 `glslangCheck` only uses `GEN_FLAGS` (it doesn't execute, so `CONFIGS`/`TIMEOUT`
 don't apply).
