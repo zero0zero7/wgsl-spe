@@ -1211,6 +1211,25 @@ class StructMember(
 @Serializable
 sealed interface Metadata
 
+/**
+ * Character offsets of the token an AST node was parsed from, into the original
+ * source string. Attached to identifier usage nodes ([Expression.Identifier],
+ * [LhsExpression.Identifier]) so tooling can splice replacements into the
+ * original text without re-serializing the whole program via [AstWriter].
+ *
+ * [start] and [stopInclusive] are the inclusive ANTLR token character indices
+ * (see org.antlr.v4.runtime.Token.getStartIndex/getStopIndex); [line] is
+ * 1-based and [col] is 0-based. This is a plain [Metadata] (not
+ * [MetadataWithCommentary]), so [AstWriter] and other consumers ignore it.
+ */
+@Serializable
+class SourceSpan(
+    val start: Int,
+    val stopInclusive: Int,
+    val line: Int,
+    val col: Int,
+) : Metadata
+
 @Serializable
 sealed interface MetadataWithCommentary : Metadata {
     fun emitCommentary(

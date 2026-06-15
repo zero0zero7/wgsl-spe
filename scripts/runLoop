@@ -1,0 +1,23 @@
+#!/bin/bash
+
+usage() {
+    cat <<EOF
+Usage: runLoop <start_seed> <count>
+
+EOF
+}
+
+if [[ $# -ne 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    exit 0
+fi
+
+START="$1"
+COUNT="$2"
+SCRIPT="$(dirname "$0")/genAndRun"
+
+for (( i=0; i<COUNT; i++ )); do
+    SEED=$(( START + i ))
+    echo "=== seed $SEED ==="
+    "$SCRIPT" "$SEED"
+done

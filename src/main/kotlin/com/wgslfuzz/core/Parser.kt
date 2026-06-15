@@ -486,7 +486,9 @@ private class AstBuilder(
 
     override fun visitCore_lhs_expression(ctx: WGSLParser.Core_lhs_expressionContext): LhsExpression =
         if (ctx.IDENT() != null) {
-            LhsExpression.Identifier(ctx.IDENT().text)
+            val t = ctx.IDENT().symbol
+            // Include source span in Identifier's metadata
+            LhsExpression.Identifier(t.text, setOf(SourceSpan(t.startIndex, t.stopIndex, t.line, t.charPositionInLine)))
         } else if (ctx.PAREN_LEFT() != null) {
             LhsExpression.Paren(visitLhs_expression(ctx.lhs_expression()))
         } else {
@@ -826,7 +828,9 @@ private class AstBuilder(
 
     override fun visitPrimary_expression(ctx: WGSLParser.Primary_expressionContext): Expression {
         if (ctx.IDENT() != null) {
-            return Expression.Identifier(ctx.IDENT().text)
+            val t = ctx.IDENT().symbol
+            // Include sourceSpan in Identifier's metadata
+            return Expression.Identifier(t.text, setOf(SourceSpan(t.startIndex, t.stopIndex, t.line, t.charPositionInLine)))
         }
         if (ctx.const_literal() != null) {
             return if (ctx.const_literal().bool_literal() != null) {
