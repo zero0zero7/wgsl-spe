@@ -12,6 +12,12 @@ runs/
 # Per-machine tool paths (copy from fuzz/common.local.sh.example)
 fuzz/common.local.sh
 
+# Machine-specific run configs: only default.env is shipped. Create your own
+# configs/<name>.env locally (see fuzz/README.md "Configs"); backend IDs come
+# from `wgslsmith harness list` and differ per machine.
+fuzz/configs/*.env
+!fuzz/configs/default.env
+
 bs.wgsl
 
 include/
