@@ -42,15 +42,7 @@ Env:
 EOF
 }
 
-if [[ $# -lt 1 || $# -gt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
-    usage
-    exit 0
-fi
-
-SEED="$1"
-CONFIG="${2:-default}"
-load_config "$CONFIG" || exit 1
-require_tool WGSLSMITH wgslsmith || exit 1
+parse_seed_args "$@"
 if [[ ! -x "$GRADLEW" ]]; then
     echo "ERROR: gradle wrapper not found/executable: $GRADLEW" >&2
     exit 1
@@ -62,13 +54,11 @@ SKEL_DIR="$SEEDDIR/skeletons"
 LOG="$SEEDDIR/run.log"
 : > "$LOG"
 
-# gen
-if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$GEN" 2>"$LOG"; then
-    echo "ERROR: gen failed (seed=$SEED)" >&2
-    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "gen-failed"
-    exit 1
-fi
-echo "gen OK -> $GEN"
+# Generate using wgslsmith.
+do_gen "$GEN" "$LOG"
+# Unlike the other runners, run.log persists for this seed (run_variant writes
+# per-variant logs, never overwriting it), so strip gen's escape codes now.
+strip_ansi_file "$LOG"
 
 # Run one variant: recondition then execute. Returns 0 on pass. On failure,
 # keeps the variant's .wgsl + .rc.wgsl and writes a per-variant <name>.log.
@@ -85,13 +75,14 @@ run_variant() {
     local vlog="$SEEDDIR/${name}.log"
 
     if ! "$WGSLSMITH" recondition "$src" "$rc" 2>"$vlog"; then
+        strip_ansi_file "$vlog"
         echo "  $name: recondition FAIL"
         (( FAIL++ )) || true
         [[ -z "$FAIL_CATEGORY" ]] && { FAIL_CATEGORY="recondition-failed"; FAIL_NAME="$name"; }
         return 1
     fi
 
-    local out status
+    local out status # declare local variables
     # CONFIGS is a space-separated list of backend IDs; each becomes its own -c
     # flag (wgslsmith's -c is repeatable). Empty => defaults.
     local run_args=(run --timeout "$TIMEOUT")
@@ -141,7 +132,7 @@ ENUM_OUT=$(cd "$REPO_ROOT" && "$GRADLEW" -q printSkeletalPrograms \
     --args="--shader $GEN --random --limit $SKELETONS --parse-timeout $PARSE_TIMEOUT $PRESERVE_FLAG --output-dir $SKEL_DIR" 2>&1)
 if [[ $? -ne 0 ]]; then
     echo "ERROR: enumeration failed (seed=$SEED)" >&2
-    echo "$ENUM_OUT" >> "$LOG"
+    echo "$ENUM_OUT" | strip_ansi >> "$LOG"
     write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "enumerate-failed"
     exit 1
 fi

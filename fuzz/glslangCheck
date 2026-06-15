@@ -24,19 +24,10 @@ named main, so tint/naga/glslang are all driven in compute mode.
 EOF
 }
 
-if [[ $# -lt 1 || $# -gt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
-    usage
-    exit 0
-fi
-
-SEED="$1"
-CONFIG="${2:-default}"
-load_config "$CONFIG" || exit 1
-
-require_tool WGSLSMITH wgslsmith || exit 1
-require_tool TINT tint             || exit 1
-require_tool NAGA naga             || exit 1
-require_tool GLSLANG glslang       || exit 1
+parse_seed_args "$@"
+require_tool TINT tint       || exit 1
+require_tool NAGA naga       || exit 1
+require_tool GLSLANG glslang || exit 1
 
 SEEDDIR=$(run_dir "$CONFIG" "$SEED")
 GEN="$SEEDDIR/gen.wgsl"
@@ -48,21 +39,22 @@ LOG="$SEEDDIR/check.log"
 
 fail() {
     local category="$1"
+    # The log accumulates raw stderr from gen/recondition/tint/naga/glslang;
+    # strip escape codes once here, since every retained-log failure exits via
+    # fail() (the pass path removes the log instead).
+    strip_ansi_file "$LOG"
     echo "FAILED (seed=$SEED, $category): artifacts in $SEEDDIR/" >&2
     write_meta "$SEEDDIR" "$CONFIG" "$SEED" "fail" "$category"
     exit 1
 }
 
-# gen
-if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$GEN" 2>>"$LOG"; then
-    echo "ERROR: gen failed (seed=$SEED)" >&2
-    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "gen-failed"
-    exit 1
-fi
-echo "gen OK -> $GEN"
+# gen. (do_gen truncates the freshly-created log; the recondition/tint/naga
+# steps below append to it.)
+do_gen "$GEN" "$LOG"
 
 # recondition
 if ! "$WGSLSMITH" recondition "$GEN" "$RC" 2>>"$LOG"; then
+    strip_ansi_file "$LOG"
     echo "ERROR: recondition failed (seed=$SEED)" >&2
     write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "recondition-failed"
     exit 1

@@ -16,15 +16,7 @@ Usage: genAndRun <seed> [config]
 EOF
 }
 
-if [[ $# -lt 1 || $# -gt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
-    usage
-    exit 0
-fi
-
-SEED="$1"
-CONFIG="${2:-default}"
-load_config "$CONFIG" || exit 1
-require_tool WGSLSMITH wgslsmith || exit 1
+parse_seed_args "$@"
 
 SEEDDIR=$(run_dir "$CONFIG" "$SEED")
 GEN="$SEEDDIR/gen.wgsl"
@@ -32,15 +24,11 @@ RC="$SEEDDIR/rc.wgsl"
 LOG="$SEEDDIR/run.log"
 
 # gen
-if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$GEN" 2>"$LOG"; then
-    echo "ERROR: gen failed (seed=$SEED)" >&2
-    write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "gen-failed"
-    exit 1
-fi
-echo "gen OK -> $GEN"
+do_gen "$GEN" "$LOG"
 
 # recondition
 if ! "$WGSLSMITH" recondition "$GEN" "$RC" 2>"$LOG"; then
+    strip_ansi_file "$LOG"
     echo "ERROR: recondition failed (seed=$SEED)" >&2
     write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "recondition-failed"
     exit 1

@@ -46,9 +46,19 @@ require_tool() {
 # Root for all generated, disposable run artifacts (gitignored).
 RUNS_DIR="${RUNS_DIR:-$COMMON_DIR/../runs}"
 
-# Strip ANSI escape codes from stdin so logs are plain text.
+# Strip ANSI/terminal escape codes from stdin so logs are plain text.
+# Covers CSI sequences -- including private-mode ones like ESC[?25l (cursor
+# hide) and erase-line ESC[2K that gradle/wgslsmith emit -- plus OSC title
+# sequences and any other lone escape byte.
 strip_ansi() {
-    sed 's/\x1b\[[0-9;]*[a-zA-Z]//g'
+    sed -E 's/\x1b\[[0-9;?]*[ -/]*[@-~]//g; s/\x1b\][^\x07]*\x07//g; s/\x1b[@-_]//g'
+}
+
+# Rewrite a file in place with escape codes removed. No-op if it doesn't exist.
+strip_ansi_file() {
+    local f="$1"
+    [[ -f "$f" ]] || return 0
+    strip_ansi < "$f" > "$f.stripped" && mv "$f.stripped" "$f"
 }
 
 # Source a named config file from configs/. Sets CONFIGS, TIMEOUT, GEN_FLAGS.
@@ -103,6 +113,39 @@ categorize() {
     elif grep -q "ABORT: ASSERT"                        <<<"$out"; then echo "swiftshader-assert"
     elif grep -q "panicked"                             <<<"$out"; then echo "panic"
     else echo "other"; fi
+}
+
+# Standard argument handling for the per-seed runners (genAndRun, glslangCheck,
+# skeletalRun), which all take "<seed> [config]". On -h/--help or a bad arg
+# count, calls the caller-defined usage() and exits 0. Otherwise sets SEED and
+# CONFIG, loads the config, and validates wgslsmith (used by all three).
+# Callers needing extra tools (e.g. glslangCheck's tint/naga/glslang) call
+# require_tool again afterwards. Invoke as: parse_seed_args "$@"
+parse_seed_args() {
+    if [[ $# -lt 1 || $# -gt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+        usage
+        exit 0
+    fi
+    SEED="$1"
+    CONFIG="${2:-default}"
+    load_config "$CONFIG" || exit 1
+    require_tool WGSLSMITH wgslsmith || exit 1
+}
+
+# Generate a shader for $SEED into the file $1, sending stderr to the log $2.
+# Echoes "gen OK -> <out>" on success. On failure: strip escape codes from the
+# log, record an error/gen-failed meta record, and exit 1. Relies on the
+# globals SEED, GEN_FLAGS, SEEDDIR, and CONFIG (all set by parse_seed_args and
+# the caller's path setup before this is called).
+do_gen() {
+    local out="$1" log="$2"
+    if ! "$WGSLSMITH" gen $GEN_FLAGS "$SEED" > "$out" 2>"$log"; then
+        strip_ansi_file "$log"
+        echo "ERROR: gen failed (seed=$SEED)" >&2
+        write_meta "$SEEDDIR" "$CONFIG" "$SEED" "error" "gen-failed"
+        exit 1
+    fi
+    echo "gen OK -> $out"
 }
 
 # Append a one-line JSON record describing a run to both the per-seed
