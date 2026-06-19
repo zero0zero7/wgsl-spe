@@ -9,6 +9,7 @@ node_modules/
 out/
 runs/
 !runs/nvidia-only/0/
+!runs/nvidia-only/95/
 
 # Per-machine tool paths (copy from fuzz/common.local.sh.example)
 fuzz/common.local.sh
