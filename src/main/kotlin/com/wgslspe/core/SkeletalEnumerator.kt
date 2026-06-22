@@ -308,12 +308,22 @@ fun getSkeletonEdits(
         }
         .filter { it.isNotEmpty() }
 
+    val maxDistinct = choices.fold(1L) { acc, c -> minOf(acc * c.size, Int.MAX_VALUE.toLong()) }.toInt()
     val combinations =
         if (random) {
-            generateSequence { getRandomCombination(choices) }.distinctBy { it.second }.take(n)
+            generateSequence { getRandomCombination(choices) }
+                .distinctBy { it.second }
+                .take(minOf(n, maxDistinct))      // <- can't ask for more than exist
         } else {
             enumerateCombinations(choices).take(n)
         }
+
+    // val combinations =
+    //     if (random) {
+    //         generateSequence { getRandomCombination(choices) }.distinctBy { it.second }.take(n)
+    //     } else {
+    //         enumerateCombinations(choices).take(n)
+    //     }
 
     // combination[i].first is the original usage node for usage i; charVect[i] is
     // its chosen replacement name — both indexed in the same usage order.
@@ -347,14 +357,19 @@ fun nRandomSkeletons(
     env: ResolvedEnvironment,
     n: Int,
     choices: List<List<Pair<AstNode, AstNode>>>
-): Sequence<Pair<TranslationUnit, List<String>>> =
-    generateSequence { getRandomCombination(choices) }
+): Sequence<Pair<TranslationUnit, List<String>>> {
+    // Cap at the number of distinct combinations that exist; otherwise, when the
+    // shader admits fewer than n distinct skeletons, distinctBy().take(n) can never
+    // reach n and spins on the infinite generateSequence forever.
+    val maxDistinct = choices.fold(1L) { acc, c -> minOf(acc * c.size, Int.MAX_VALUE.toLong()) }.toInt()
+    return generateSequence { getRandomCombination(choices) }
     .distinctBy { it.second } // prevents duplicates if n is large
-    .take(n)
+    .take(minOf(n, maxDistinct))
     .map { (combination, charVect) ->
         val replacementMap = combination.toMap()
         Pair(tu.clone { node -> replacementMap[node] }, charVect)
     }
+}
 
 
 /**
