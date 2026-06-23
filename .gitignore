@@ -7,16 +7,18 @@ node_modules/
 .gradle/
 
 out/
+# Disposable run artifacts, segregated per host (runs/<hostname>/...). Curated
+# reproductions are kept under cases/ (tracked) instead.
 runs/
-!runs/nvidia-only/0/
-!runs/nvidia-only/95/
 
-# Per-machine tool paths (copy from fuzz/common.local.sh.example)
+# Filesystem-wide tool paths (copy from fuzz/common.local.sh.example). Per-host
+# overrides live in fuzz/hosts/<hostname>.sh and ARE tracked -- see the
+# "Per-machine setup" section of fuzz/README.md.
 fuzz/common.local.sh
 
-# Machine-specific run configs: only default.env is shipped. Create your own
-# configs/<name>.env locally (see fuzz/README.md "Configs"); backend IDs come
-# from `wgslsmith harness list` and differ per machine.
+# Machine-specific run configs: only default.env (portable) is shipped. Other
+# configs select machine-specific backends, so they're gitignored; they can
+# still reference per-host CFG_* symbols from fuzz/hosts/<hostname>.sh.
 fuzz/configs/*.env
 !fuzz/configs/default.env
 
