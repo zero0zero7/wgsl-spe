@@ -11,16 +11,10 @@ out/
 # reproductions are kept under cases/ (tracked) instead.
 runs/
 
-# Filesystem-wide tool paths (copy from fuzz/common.local.sh.example). Per-host
-# overrides live in fuzz/hosts/<hostname>.sh and ARE tracked -- see the
-# "Per-machine setup" section of fuzz/README.md.
-fuzz/common.local.sh
-
-# Machine-specific run configs: only default.env (portable) is shipped. Other
-# configs select machine-specific backends, so they're gitignored; they can
-# still reference per-host CFG_* symbols from fuzz/hosts/<hostname>.sh.
-fuzz/configs/*.env
-!fuzz/configs/default.env
+# Run configs are tracked: they select backends symbolically via per-host CFG_*
+# symbols (with literal :- fallbacks), so they're portable across the fleet. The
+# only machine-specific data -- the adapter IDs those CFG_* resolve to -- lives
+# in fuzz/hosts/<hostname>.sh. See the "Configs" section of fuzz/README.md.
 
 bs.wgsl
 
