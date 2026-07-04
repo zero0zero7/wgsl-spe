@@ -11,12 +11,13 @@
 #   scripts/toSpirv <shader.wgsl> --naga       # naga only
 #   scripts/toSpirv <shader.wgsl> --out <dir>  # where to write .spv (default: <shader-dir>/spirv)
 #
-# Tool locations (override by exporting these before running):
-NAGA="${NAGA:-/home/xyl25/mysmith/external/wgpu/target/debug/naga}"
-TINT="${TINT:-/home/xyl25/dawn/out/Debug/tint}"
-SPIRV_VAL="${SPIRV_VAL:-/home/xyl25/dawn/out/spirv-tools-sanitized/tools/spirv-val}"
-
+# Tool paths (TINT, NAGA, SPIRV_VAL) come from fuzz/common.sh, which resolves
+# each from fuzz/hosts/<hostname>.sh (or an exported env var), falling back to
+# PATH. Set them there rather than editing this script; see fuzz/hosts/example.sh.
 set -u
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/../fuzz/common.sh"
 
 out_dir=""
 wgsl=""
@@ -40,10 +41,11 @@ if [ -z "$wgsl" ]; then echo "error: no .wgsl file given (see --help)"; exit 2; 
 if [ ! -f "$wgsl" ]; then echo "error: shader not found: $wgsl"; exit 2; fi
 : "${out_dir:=$(dirname "$wgsl")/spirv}"
 
-# Only require the tools we're actually going to use.
-[ -x "$SPIRV_VAL" ] || { echo "error: not executable: $SPIRV_VAL (export SPIRV_VAL to fix)"; exit 2; }
-[ "$do_tint" -eq 1 ] && { [ -x "$TINT" ] || { echo "error: not executable: $TINT (export TINT to fix)"; exit 2; }; }
-[ "$do_naga" -eq 1 ] && { [ -x "$NAGA" ] || { echo "error: not executable: $NAGA (export NAGA to fix)"; exit 2; }; }
+# Validate only the tools we're actually going to use (require_tool prints an
+# actionable message pointing at fuzz/hosts/<hostname>.sh).
+require_tool SPIRV_VAL spirv-val || exit 2
+[ "$do_tint" -eq 1 ] && { require_tool TINT tint || exit 2; }
+[ "$do_naga" -eq 1 ] && { require_tool NAGA naga || exit 2; }
 
 mkdir -p "$out_dir"
 echo "shader : $wgsl"
