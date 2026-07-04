@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Convert a WGSL shader to SPIR-V and validate the result with spirv-val.
+# By default runs BOTH back-ends: tint (translate + validate), then naga
+# (translate + validate). Handy for triaging a crash/bug case: it shows where
+# each front-end accepts or rejects the shader, and whether the emitted SPIR-V
+# is valid.
+#
+# Usage:
+#   scripts/toSpirv <shader.wgsl>              # tint then naga (default)
+#   scripts/toSpirv <shader.wgsl> --tint       # tint only
+#   scripts/toSpirv <shader.wgsl> --naga       # naga only
+#   scripts/toSpirv <shader.wgsl> --out <dir>  # where to write .spv (default: <shader-dir>/spirv)
+#
+# Tool locations (override by exporting these before running):
+NAGA="${NAGA:-/home/xyl25/mysmith/external/wgpu/target/debug/naga}"
+TINT="${TINT:-/home/xyl25/dawn/out/Debug/tint}"
+SPIRV_VAL="${SPIRV_VAL:-/home/xyl25/dawn/out/spirv-tools-sanitized/tools/spirv-val}"
+
+set -u
+
+out_dir=""
+wgsl=""
+do_tint=0
+do_naga=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tint) do_tint=1; shift ;;
+    --naga) do_naga=1; shift ;;
+    --out)  out_dir="$2"; shift 2 ;;
+    -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) wgsl="$1"; shift ;;
+  esac
+done
+
+# No back-end flag given -> run both.
+if [ "$do_tint" -eq 0 ] && [ "$do_naga" -eq 0 ]; then do_tint=1; do_naga=1; fi
+
+if [ -z "$wgsl" ]; then echo "error: no .wgsl file given (see --help)"; exit 2; fi
+if [ ! -f "$wgsl" ]; then echo "error: shader not found: $wgsl"; exit 2; fi
+: "${out_dir:=$(dirname "$wgsl")/spirv}"
+
+# Only require the tools we're actually going to use.
+[ -x "$SPIRV_VAL" ] || { echo "error: not executable: $SPIRV_VAL (export SPIRV_VAL to fix)"; exit 2; }
+[ "$do_tint" -eq 1 ] && { [ -x "$TINT" ] || { echo "error: not executable: $TINT (export TINT to fix)"; exit 2; }; }
+[ "$do_naga" -eq 1 ] && { [ -x "$NAGA" ] || { echo "error: not executable: $NAGA (export NAGA to fix)"; exit 2; }; }
+
+mkdir -p "$out_dir"
+echo "shader : $wgsl"
+echo "outdir : $out_dir"
+echo
+
+# run <label> <spv-path> <converter-cmd...>  — convert, then validate.
+run() {
+  local label="$1" spv="$2"; shift 2
+  echo "==================== $label ===================="
+  echo "\$ $*"
+  if "$@"; then
+    echo "[$label] convert: OK -> $spv"
+    echo "\$ spirv-val $spv"
+    if "$SPIRV_VAL" "$spv"; then
+      echo "[$label] spirv-val: VALID"
+    else
+      echo "[$label] spirv-val: INVALID (exit $?)"
+    fi
+  else
+    echo "[$label] convert: FAILED (exit $?) — no SPIR-V produced"
+  fi
+  echo
+}
+
+# tint first: -f spirv writes a .spv binary.
+[ "$do_tint" -eq 1 ] && run "tint" "$out_dir/tint.spv" "$TINT" -f spirv "$wgsl" -o "$out_dir/tint.spv"
+# naga infers format from the output extension; .spv = binary SPIR-V.
+[ "$do_naga" -eq 1 ] && run "naga" "$out_dir/naga.spv" "$NAGA" "$wgsl" "$out_dir/naga.spv"
