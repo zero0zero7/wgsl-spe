@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Convert a WGSL shader to SPIR-V and validate the result with spirv-val.
-# By default runs BOTH back-ends: tint (translate + validate), then naga
-# (translate + validate). Handy for triaging a crash/bug case: it shows where
-# each front-end accepts or rejects the shader, and whether the emitted SPIR-V
-# is valid.
+# By default runs BOTH back-ends: tint (translate + validate), then naga (translate + validate). 
+# Used for triage, checks if wgsl shader execution failures are due to SPIR-V translation issues.
 #
 # Usage:
 #   scripts/toSpirv <shader.wgsl>              # tint then naga (default)

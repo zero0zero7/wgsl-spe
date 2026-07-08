@@ -5,6 +5,7 @@ bin/
 build/
 node_modules/
 .gradle/
+default.profraw
 
 out/
 # Disposable run artifacts, segregated per host (runs/<hostname>/...). Curated
