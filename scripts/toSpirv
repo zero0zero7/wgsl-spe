@@ -15,7 +15,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/../fuzz/common.sh"
+source "$HERE/../fuzz/lib/common.sh"
 
 out_dir=""
 wgsl=""
