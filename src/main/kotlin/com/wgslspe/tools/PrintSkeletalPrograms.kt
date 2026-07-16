@@ -7,8 +7,12 @@ import com.wgslfuzz.core.SourceSpan
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.collectSkeletalCandidates
 import com.wgslspe.core.allReplacementSkeletons
-import com.wgslspe.core.getSkeletons
-import com.wgslspe.core.getSkeletonEdits
+import com.wgslspe.core.getCombinedSkeletonEdits
+import com.wgslspe.core.getCombinedSkeletons
+import com.wgslspe.core.getFunctionSkeletonEdits
+import com.wgslspe.core.getFunctionSkeletons
+import com.wgslspe.core.getVariableSkeletons
+import com.wgslspe.core.getVariableSkeletonEdits
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
@@ -85,6 +89,14 @@ fun main(args: Array<String>) {
             description = "Maximum number of skeletons to print (default: all)",
         )
 
+    val mode by parser
+        .option(
+            ArgType.Choice(listOf("variables", "functions", "both"), { it }),
+            fullName = "mode",
+            description = "Which replacement axis to enumerate: variable usages, function callees, or both combined " +
+                "(each skeleton applies one variable combination and one function combination together) (default: variables)",
+        ).default("variables")
+
     val maxReplacements by parser
         .option(
             ArgType.Int,
@@ -150,7 +162,7 @@ fun main(args: Array<String>) {
     println("// Input: $shaderPath")
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
-    if (usages.isEmpty()) {
+    if (mode == "variables" && usages.isEmpty()) {
         println("No usages found")
         return
     }
@@ -159,7 +171,11 @@ fun main(args: Array<String>) {
 
     if (preserveFormat) {
         // Format-preserving mode: splice replacements into the original text.
-        val edits = getSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+        val edits = when (mode) {
+            "variables" -> getVariableSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+            "functions" -> getFunctionSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+            else -> getCombinedSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+        }
         for ((idx, editCharVect) in edits.take(maxSkeletons).withIndex()) {
             val (editList, charVect) = editCharVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
@@ -168,9 +184,13 @@ fun main(args: Array<String>) {
         }
     } else {
         // Default mode: re-serialize each skeleton via AstWriter.
-        val skeletons = getSkeletons(tu, env, n = maxSkeletons, random = random)
-        for ((idx, skeleton_charVect) in skeletons.take(maxSkeletons).withIndex()) {
-            val (skeleton, charVect) = skeleton_charVect
+        val skeletons = when (mode) {
+            "variables" -> getVariableSkeletons(tu, env, n = maxSkeletons, random = random)
+            "functions" -> getFunctionSkeletons(tu, env, n = maxSkeletons, random = random)
+            else -> getCombinedSkeletons(tu, env, n = maxSkeletons, random = random)
+        }
+        for ((idx, skeletonCharVect) in skeletons.take(maxSkeletons).withIndex()) {
+            val (skeleton, charVect) = skeletonCharVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
             emitSkeleton(skeleton, File(outDir, fileName))

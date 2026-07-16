@@ -418,15 +418,18 @@ private class AstBuilder(
             body = visitCompound_statement(ctx.compound_statement()),
         )
 
-    override fun visitFunc_call_statement(ctx: WGSLParser.Func_call_statementContext): Statement.FunctionCall =
-        Statement.FunctionCall(
-            callee = ctx.IDENT().text,
+    override fun visitFunc_call_statement(ctx: WGSLParser.Func_call_statementContext): Statement.FunctionCall {
+        val t = ctx.IDENT().symbol
+        return Statement.FunctionCall(
+            callee = t.text,
             args =
                 ctx
                     .argument_expression_list()
                     .expression()
                     .map(::visitExpression),
+            metadata = setOf(SourceSpan(t.startIndex, t.stopIndex, t.line, t.charPositionInLine)),
         )
+    }
 
     override fun visitVariable_statement(ctx: WGSLParser.Variable_statementContext): Statement.Variable =
         Statement.Variable(
@@ -1050,10 +1053,12 @@ private class AstBuilder(
                     return Expression.TypeAliasValueConstructor(name, args)
                 }
                 else -> {
+                    val t = ctx.IDENT().symbol
                     return Expression.FunctionCall(
                         name,
                         ctx.type_decl()?.let(::visitType_decl),
                         args,
+                        setOf(SourceSpan(t.startIndex, t.stopIndex, t.line, t.charPositionInLine)),
                     )
                 }
             }
