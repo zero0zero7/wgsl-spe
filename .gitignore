@@ -6,6 +6,7 @@ build/
 node_modules/
 .gradle/
 default.profraw
+.claude/
 
 out/
 # Disposable run artifacts, segregated per host (runs/<hostname>/...). Curated

@@ -159,6 +159,11 @@ tasks.register<JavaExec>("runShader") {
     jvmArgs("-Djava.library.path=src/main/cpp/build")
 }
 
+tasks.register<JavaExec>("applyDivergentCounters") {
+    mainClass.set("com.wgslspe.tools.ApplyDivergentCountersKt")
+    classpath = sourceSets["main"].runtimeClasspath
+}
+
 tasks.register<JavaExec>("executePipeline") {
     mainClass.set("com.wgslspe.tools.PipelineKt")
     classpath = sourceSets["main"].runtimeClasspath

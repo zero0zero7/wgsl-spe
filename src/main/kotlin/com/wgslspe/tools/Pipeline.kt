@@ -8,7 +8,7 @@ import com.wgslspe.core.BufferResult
 import com.wgslspe.core.DawnHarness
 import com.wgslspe.core.collectSkeletalCandidates
 import com.wgslspe.core.allReplacementSkeletons
-import com.wgslspe.core.getSkeletons
+import com.wgslspe.core.getVariableSkeletons
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
@@ -120,7 +120,7 @@ fun main(args: Array<String>) {
     }
 
     // 1. Enumerate skeletons
-    val skeletons = getSkeletons(tu, env, n=limit ?: Int.MAX_VALUE, random=true)
+    val skeletons = getVariableSkeletons(tu, env, n=limit ?: Int.MAX_VALUE, random=true)
     for ((idx, skeletonCharVect) in skeletons.withIndex()) {
         val (skeleton, charVect) = skeletonCharVect
         val skeletonName = "skeleton_%03d.wgsl".format(idx)

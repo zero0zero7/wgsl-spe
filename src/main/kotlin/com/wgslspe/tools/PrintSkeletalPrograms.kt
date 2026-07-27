@@ -6,9 +6,14 @@ import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.SourceSpan
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.collectSkeletalCandidates
+import com.wgslspe.core.stripAstWriterTrailingCommas
 import com.wgslspe.core.allReplacementSkeletons
-import com.wgslspe.core.getSkeletons
-import com.wgslspe.core.getSkeletonEdits
+import com.wgslspe.core.getCombinedSkeletonEdits
+import com.wgslspe.core.getCombinedSkeletons
+import com.wgslspe.core.getFunctionSkeletonEdits
+import com.wgslspe.core.getFunctionSkeletons
+import com.wgslspe.core.getVariableSkeletons
+import com.wgslspe.core.getVariableSkeletonEdits
 import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
@@ -20,23 +25,10 @@ import kotlin.system.exitProcess
 import java.io.FileOutputStream
 import java.io.ByteArrayOutputStream
 
-/**
- * AstWriter always emits a trailing comma after the last element of argument
- * lists, vec/array constructors, switch-case selector lists, etc. That is valid
- * WGSL, but wgslsmith's (stricter) parser rejects a comma immediately before
- * `)`, `]`, `>` or a case `:`. Since skeletons produced here are fed back into
- * wgslsmith (recondition/run), strip those trailing commas so the two tools
- * interoperate. WGSL has no string/char literals, so a textual pass is safe.
- *
- * NB: `}` is deliberately excluded -- wgslsmith both emits and requires the
- * trailing comma in struct bodies (`d: f32,\n}`), so it must be kept.
- */
-private val TRAILING_COMMA = Regex(",\\s*(?=[)\\]>:])")
-
 private fun emitSkeleton(skeleton: com.wgslfuzz.core.TranslationUnit, file: File) {
     val buffer = ByteArrayOutputStream()
     AstWriter(out = PrintStream(buffer)).emit(skeleton)
-    file.writeText(TRAILING_COMMA.replace(buffer.toString(Charsets.UTF_8.name()), ""))
+    file.writeText(stripAstWriterTrailingCommas(buffer.toString(Charsets.UTF_8.name())))
 }
 
 /**
@@ -84,6 +76,14 @@ fun main(args: Array<String>) {
             fullName = "limit",
             description = "Maximum number of skeletons to print (default: all)",
         )
+
+    val mode by parser
+        .option(
+            ArgType.Choice(listOf("variables", "functions", "both"), { it }),
+            fullName = "mode",
+            description = "Which replacement axis to enumerate: variable usages, function callees, or both combined " +
+                "(each skeleton applies one variable combination and one function combination together) (default: variables)",
+        ).default("variables")
 
     val maxReplacements by parser
         .option(
@@ -150,7 +150,7 @@ fun main(args: Array<String>) {
     println("// Input: $shaderPath")
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
-    if (usages.isEmpty()) {
+    if (mode == "variables" && usages.isEmpty()) {
         println("No usages found")
         return
     }
@@ -159,7 +159,11 @@ fun main(args: Array<String>) {
 
     if (preserveFormat) {
         // Format-preserving mode: splice replacements into the original text.
-        val edits = getSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+        val edits = when (mode) {
+            "variables" -> getVariableSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+            "functions" -> getFunctionSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+            else -> getCombinedSkeletonEdits(tu, env, n = maxSkeletons, random = random)
+        }
         for ((idx, editCharVect) in edits.take(maxSkeletons).withIndex()) {
             val (editList, charVect) = editCharVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
@@ -168,9 +172,13 @@ fun main(args: Array<String>) {
         }
     } else {
         // Default mode: re-serialize each skeleton via AstWriter.
-        val skeletons = getSkeletons(tu, env, n = maxSkeletons, random = random)
-        for ((idx, skeleton_charVect) in skeletons.take(maxSkeletons).withIndex()) {
-            val (skeleton, charVect) = skeleton_charVect
+        val skeletons = when (mode) {
+            "variables" -> getVariableSkeletons(tu, env, n = maxSkeletons, random = random)
+            "functions" -> getFunctionSkeletons(tu, env, n = maxSkeletons, random = random)
+            else -> getCombinedSkeletons(tu, env, n = maxSkeletons, random = random)
+        }
+        for ((idx, skeletonCharVect) in skeletons.take(maxSkeletons).withIndex()) {
+            val (skeleton, charVect) = skeletonCharVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
             emitSkeleton(skeleton, File(outDir, fileName))

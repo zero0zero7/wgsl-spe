@@ -256,20 +256,30 @@ private fun suitableVariables(
 }
 
 
-fun getSkeletons(
+// Per-usage-site replacement options: each site maps to pairs of <original usage node, replacement
+// identifier node>. Sites with no suitable variable are dropped.
+// internal: also consumed by CombinedEnumerator.
+internal fun variableChoices(
+    tu: TranslationUnit,
+    env: ResolvedEnvironment,
+): List<List<Pair<AstNode, AstNode>>> {
+    val (_, usages) = collectSkeletalCandidates(tu, env)
+    return usages
+        .map { (node, concreteType, scope, overrides) ->
+            suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
+        }
+        .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
+}
+
+fun getVariableSkeletons(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
     n: Int = Int.MAX_VALUE,
     random: Boolean = true,
 ): Sequence<Pair<TranslationUnit, List<String>>> {
-    val (_, usages) = collectSkeletalCandidates(tu, env)
-    if (usages.isEmpty()) return emptySequence()
+    val choices = variableChoices(tu, env)
+    if (choices.isEmpty()) return emptySequence()
 
-    val choices: List<List<Pair<AstNode, AstNode>>> = usages
-        .map { (node, concreteType, scope, overrides) ->
-            suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
-        }
-        .filter { it.isNotEmpty() } // [(usage1, cloned11), (usage1, cloned12), ...] repeat for each usage
     val tmp = choices.fold(1L) { acc, list -> minOf(acc * list.size, Int.MAX_VALUE.toLong()) }
     println("Total combinations (capped at Int.MAX_VALUE): $tmp")
 
@@ -282,7 +292,7 @@ fun getSkeletons(
 }
 
 /**
- * Like [getSkeletons], but instead of producing a re-serialized [TranslationUnit]
+ * Like [getVariableSkeletons], but instead of producing a re-serialized [TranslationUnit]
  * per skeleton, yields the list of *edits* to apply to the original source text.
  * Each edit is (the original usage node, the replacement variable name). The
  * usage node carries a [com.wgslfuzz.core.SourceSpan] (attached at parse time),
@@ -291,22 +301,16 @@ fun getSkeletons(
  * intact. This avoids the [com.wgslfuzz.core.AstWriter] round-trip, which would
  * re-emit the whole program in a dialect wgslsmith's parser rejects.
  *
- * The original [getSkeletons] is unchanged; this is an additional entry point.
+ * The original [getVariableSkeletons] is unchanged; this is an additional entry point.
  */
-fun getSkeletonEdits(
+fun getVariableSkeletonEdits(
     tu: TranslationUnit,
     env: ResolvedEnvironment,
     n: Int = Int.MAX_VALUE,
     random: Boolean = true,
 ): Sequence<Pair<List<Pair<AstNode, String>>, List<String>>> {
-    val (_, usages) = collectSkeletalCandidates(tu, env)
-    if (usages.isEmpty()) return emptySequence()
-
-    val choices: List<List<Pair<AstNode, AstNode>>> = usages
-        .map { (node, concreteType, scope, overrides) ->
-            suitableVariables(scope, concreteType, overrides).map { varName -> node to node.cloneWithName(varName) }
-        }
-        .filter { it.isNotEmpty() }
+    val choices = variableChoices(tu, env)
+    if (choices.isEmpty()) return emptySequence()
 
     val maxDistinct = choices.fold(1L) { acc, c -> minOf(acc * c.size, Int.MAX_VALUE.toLong()) }.toInt()
     val combinations =
@@ -379,7 +383,7 @@ fun nRandomSkeletons(
  *   - a list of (original, replacement) node pairs for one skeleton
  *   - a characteristic vector of usage nodes represented as a list of Strings for the skeleton given the chosen replacements
  */
-private fun enumerateCombinations(
+internal fun enumerateCombinations(
     choices: List<List<Pair<AstNode, AstNode>>>,
 ): Sequence<Pair<List<Pair<AstNode, AstNode>>, List<String>>> {
 
@@ -411,7 +415,7 @@ private fun enumerateCombinations(
 /**
  * Yields one random replacement per usage across all combinations.
  */
-private fun getRandomCombination(
+internal fun getRandomCombination(
     choices: List<List<Pair<AstNode, AstNode>>>,
 ): Pair<List<Pair<AstNode, AstNode>>, List<String>> {
     val combination = mutableListOf<Pair<AstNode, AstNode>>()

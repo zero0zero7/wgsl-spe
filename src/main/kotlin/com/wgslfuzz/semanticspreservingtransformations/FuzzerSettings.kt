@@ -204,6 +204,8 @@ interface FuzzerSettings {
     fun applyIdentityOperation(): Boolean = randomInt(100) < 50
 
     fun controlFlowWrap(): Boolean = randomInt(100) < 50
+
+    fun injectDivergentCounter(): Boolean = randomInt(100) < 50
 }
 
 class DefaultFuzzerSettings(
