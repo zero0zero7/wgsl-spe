@@ -6,6 +6,7 @@ import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.SourceSpan
 import com.wgslfuzz.core.createShaderJob
 import com.wgslspe.core.collectSkeletalCandidates
+import com.wgslspe.core.stripAstWriterTrailingCommas
 import com.wgslspe.core.allReplacementSkeletons
 import com.wgslspe.core.getCombinedSkeletonEdits
 import com.wgslspe.core.getCombinedSkeletons
@@ -24,23 +25,10 @@ import kotlin.system.exitProcess
 import java.io.FileOutputStream
 import java.io.ByteArrayOutputStream
 
-/**
- * AstWriter always emits a trailing comma after the last element of argument
- * lists, vec/array constructors, switch-case selector lists, etc. That is valid
- * WGSL, but wgslsmith's (stricter) parser rejects a comma immediately before
- * `)`, `]`, `>` or a case `:`. Since skeletons produced here are fed back into
- * wgslsmith (recondition/run), strip those trailing commas so the two tools
- * interoperate. WGSL has no string/char literals, so a textual pass is safe.
- *
- * NB: `}` is deliberately excluded -- wgslsmith both emits and requires the
- * trailing comma in struct bodies (`d: f32,\n}`), so it must be kept.
- */
-private val TRAILING_COMMA = Regex(",\\s*(?=[)\\]>:])")
-
 private fun emitSkeleton(skeleton: com.wgslfuzz.core.TranslationUnit, file: File) {
     val buffer = ByteArrayOutputStream()
     AstWriter(out = PrintStream(buffer)).emit(skeleton)
-    file.writeText(TRAILING_COMMA.replace(buffer.toString(Charsets.UTF_8.name()), ""))
+    file.writeText(stripAstWriterTrailingCommas(buffer.toString(Charsets.UTF_8.name())))
 }
 
 /**
