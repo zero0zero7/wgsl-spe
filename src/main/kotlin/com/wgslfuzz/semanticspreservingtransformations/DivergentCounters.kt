@@ -52,6 +52,7 @@ import com.wgslfuzz.core.traverse
 //
 // v1:
 // - Only thread 60 allowed to run program, all other threads do early return immediately in entry point. 
+// - Note: divergent conditions are hardcoded to be %2 and %3 (TODO)
 // - Deterministic, so that the oracle can check the entire output buffer for equality across shader variants, not just the 0th scalar.
 // - Counter value represented in 2nd output.
 //
@@ -85,6 +86,9 @@ private class AddDivergentCounters(
     // The single counter local belonging to the entry point currently being instrumented. 
     // Set in apply() before that entry point's body is rewritten; every pair injected into it refers to this one name.
     private lateinit var counterName: String
+
+    private lateinit var incrementValue: Expression
+    private lateinit var decrementValue: Expression
 
     /**
      * Finds an expression that reads local_invocation_id from an EXISTING parameter (directly, or via a struct parameter).
@@ -230,7 +234,7 @@ private class AddDivergentCounters(
                             Statement.Assignment(
                                 lhsExpression = LhsExpression.Identifier(counterName),
                                 assignmentOperator = AssignmentOperator.PLUS_EQUAL,
-                                rhs = lidValue,
+                                rhs = incrementValue.clone(),
                             ),
                         ),
                     ),
@@ -238,14 +242,14 @@ private class AddDivergentCounters(
             )
         val decrementIf =
             Statement.If(
-                condition = modNCondition(n = 2),
+                condition = modNCondition(n = 3),
                 thenBranch =
                     Statement.Compound(
                         listOf(
                             Statement.Assignment(
                                 lhsExpression = LhsExpression.Identifier(counterName),
                                 assignmentOperator = AssignmentOperator.MINUS_EQUAL,
-                                rhs = lidValue.clone(),
+                                rhs = decrementValue.clone(),
                             ),
                         ),
                     ),
@@ -503,6 +507,17 @@ private class AddDivergentCounters(
                     }
 
                 counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}"
+                fun threadData(): Expression = Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER)
+                incrementValue = threadData()
+                decrementValue = Expression.Binary(
+                    operator = BinaryOperator.MODULO,
+                    lhs = threadData(),
+                    rhs = Expression.Binary(
+                        operator = BinaryOperator.MINUS,
+                        lhs = Expression.IntLiteral("2147483645i"),
+                        rhs = threadData(),
+                    ),
+                )
                 val counterWrite = createCounterWrite(outputBufferName=outputInstance.name)
                 val injectedBody = decl.body.clone { injectDivergentCounters(it, injections, counterWrite) }
 
