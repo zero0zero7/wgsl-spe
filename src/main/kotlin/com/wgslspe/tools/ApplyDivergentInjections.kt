@@ -10,9 +10,9 @@ import com.wgslfuzz.core.GlobalDecl
 import com.wgslfuzz.core.ShaderJob
 import com.wgslfuzz.core.createShaderJob
 import com.wgslfuzz.semanticspreservingtransformations.DefaultFuzzerSettings
-import com.wgslfuzz.semanticspreservingtransformations.addDivergentCountersV0
-import com.wgslfuzz.semanticspreservingtransformations.addDivergentCountersV1
-import com.wgslfuzz.semanticspreservingtransformations.addDivergentCountersV2
+import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV0
+import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV1
+import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV2
 import com.wgslspe.core.rewriteWorkgroupSize
 import com.wgslspe.core.stripAstWriterTrailingCommas
 import kotlinx.cli.ArgParser
@@ -31,7 +31,7 @@ import kotlin.random.Random
 import kotlin.random.asJavaRandom
 import kotlin.system.exitProcess
 
-// Applies addDivergentCounters (DivergentCounters.kt) to a supplied shader, bypassing initMetamorphicTransformations' random pick over the full transformation list.
+// Applies addDivergentInjections (DivergentInjections.kt) to a supplied shader, bypassing initMetamorphicTransformations' random pick over the full transformation list.
 //
 // --workgroupSize is REQUIRED whenever --injectDivergence is set.
 fun main(args: Array<String>) {
@@ -50,7 +50,7 @@ fun main(args: Array<String>) {
         .default(0)
 
     val injectDivergence by parser
-        .option(ArgType.Boolean, fullName = "injectDivergence", description = "Apply addDivergentCounters")
+        .option(ArgType.Boolean, fullName = "injectDivergence", description = "Apply addDivergentInjections")
         .default(false)
 
     val workgroupSize by parser
@@ -65,7 +65,7 @@ fun main(args: Array<String>) {
             ArgType.Int,
             fullName = "divergenceVersion",
             shortName = "dv",
-            description = "Which addDivergentCounters variant to apply: 0 or 1. Required when --injectDivergence is set.",
+            description = "Which addDivergentInjections variant to apply: 0 or 1. Required when --injectDivergence is set.",
         )
 
     val inputsFilePath by parser
@@ -162,9 +162,9 @@ fun main(args: Array<String>) {
     val fuzzerSettings = DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom())
     val transformedShaderJob =
         when (divergenceVersion) {
-            0 -> addDivergentCountersV0(shaderJob, fuzzerSettings)
-            1 -> addDivergentCountersV1(shaderJob, fuzzerSettings)
-            else -> addDivergentCountersV2(shaderJob, fuzzerSettings)
+            0 -> addDivergentInjectionsV0(shaderJob, fuzzerSettings)
+            1 -> addDivergentInjectionsV1(shaderJob, fuzzerSettings)
+            else -> addDivergentInjectionsV2(shaderJob, fuzzerSettings)
         }
 
     val textOut = ByteArrayOutputStream()
