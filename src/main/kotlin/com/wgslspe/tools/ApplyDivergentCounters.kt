@@ -12,6 +12,7 @@ import com.wgslfuzz.core.createShaderJob
 import com.wgslfuzz.semanticspreservingtransformations.DefaultFuzzerSettings
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentCountersV0
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentCountersV1
+import com.wgslfuzz.semanticspreservingtransformations.addDivergentCountersV2
 import com.wgslspe.core.rewriteWorkgroupSize
 import com.wgslspe.core.stripAstWriterTrailingCommas
 import kotlinx.cli.ArgParser
@@ -114,8 +115,8 @@ fun main(args: Array<String>) {
         System.err.println("--divergenceVersion is required when --injectDivergence is set (0 or 1).")
         exitProcess(1)
     }
-    if (divergenceVersion != null && divergenceVersion !in 0..1) {
-        System.err.println("--divergenceVersion must be 0 or 1, got $divergenceVersion")
+    if (divergenceVersion != null && divergenceVersion !in 0..2) {
+        System.err.println("--divergenceVersion must be 0 or 1 or 2, got $divergenceVersion")
         exitProcess(1)
     }
     if (injectDivergence && divergenceVersion == 1 && inputsFilePath == null) {
@@ -162,7 +163,8 @@ fun main(args: Array<String>) {
     val transformedShaderJob =
         when (divergenceVersion) {
             0 -> addDivergentCountersV0(shaderJob, fuzzerSettings)
-            else -> addDivergentCountersV1(shaderJob, fuzzerSettings)
+            1 -> addDivergentCountersV1(shaderJob, fuzzerSettings)
+            else -> addDivergentCountersV2(shaderJob, fuzzerSettings)
         }
 
     val textOut = ByteArrayOutputStream()

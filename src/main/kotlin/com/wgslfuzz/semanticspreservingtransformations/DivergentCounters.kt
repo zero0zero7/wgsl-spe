@@ -19,6 +19,7 @@ import com.wgslfuzz.core.StructMember
 import com.wgslfuzz.core.TranslationUnit
 import com.wgslfuzz.core.TypeDecl
 import com.wgslfuzz.core.clone
+import com.wgslfuzz.core.nodesPreOrder
 import com.wgslfuzz.core.traverse
 
 // Injects pairs of statements of the form:
@@ -56,6 +57,33 @@ import com.wgslfuzz.core.traverse
 // - Deterministic, so that the oracle can check the entire output buffer for equality across shader variants, not just the 0th scalar.
 // - Counter value represented in 2nd output.
 //
+// v2: similar to v1 except
+// - Instead of a synthesized counter variable, an EXISTING local variable already used by the entry
+//   point is hijacked as the target: it must be a local (function-scope `var`), reduced to a scalar
+//   leaf via firstScalarLeaf() if it isn't already scalar, written, and later read.
+// - Increment and Decrement are no longer adjacent: the increment goes right after the write, the
+//   decrement right before the read, so real code can sit between them. Both are still gated by the
+//   SAME divergent condition (mod2, unlike v1's mismatched mod2/mod3) -- unlike v1's throwaway
+//   counter, this variable is real program state the shader still reads, so an unmatched branch
+//   would corrupt it rather than just skew a diagnostic. The increment and decrement must live in
+//   the same Statement.Compound as each other (see findLocalVariableCandidates/findReadIndex), and
+//   no Break/Return/Discard may sit between them (Continue is fine), since that could strand an
+//   increment without its paired decrement ever running.
+// - The declaration and the read need not share a scope: a `var` declared in an outer scope (eg. a
+//   function body) may be read inside an inner scope (eg. a `for` loop body). When they differ, the
+//   pair is injected into any single Compound on the path between the two (inclusive) -- the
+//   declaring scope itself (write anchored at the declaration) or a descendant scope of it (write
+//   anchored at the top of that scope, since the variable already holds a value by the time control
+//   reaches it). Which scope is chosen, and where exactly within it the increment/decrement land,
+//   is randomized -- see findLocalVariableCandidates.
+// - No early-return thread-selection gating: every invocation actually runs concurrently (restoring
+//   genuine cross-invocation divergence, which v1's single-thread restriction gave up). To avoid the
+//   resulting write-write race on the output, each invocation gets its own bounds-checked slot in a
+//   fixed-size output array, indexed by local_invocation_index (see createInputOutputForV2 /
+//   createIndexedCounterWrite). The write/decrement magnitude is read from a dedicated dynamic input
+//   buffer (not a literal) so it can't be compile-time constant-folded, and the same value is used
+//   for both increment and decrement so a thread taking the shared branch cancels out exactly.
+//
 // Every @compute entry point is instrumented:
 // - if local_invocation_id isn't already among its parameters (directly, or via a struct parameter),
 //  a fresh parameter (`@builtin(local_invocation_id) divergent_counters_lid_<id>: vec3<u32>`) is appended to the entry point's parameter list.
@@ -76,6 +104,14 @@ private const val MAX_OUTPUT_NESTING_DEPTH = 16
 // The single i32 member shared by v1's injected input (thread selector) and output (counter) structs.
 // Read `thread_to_run.<member>` and Write `counter_output.<member>`
 private const val V1_STRUCT_MEMBER = "data"
+
+// v2's injected input (magnitude) and output (per-thread array) structs share this member name.
+private const val V2_STRUCT_MEMBER = "data"
+
+// Fixed capacity of v2's output array, one slot per thread (indexed by local_invocation_index).
+// 256 comfortably covers WebGPU's spec max invocations per workgroup, so the bounds check added
+// around each write is a safety net rather than something a real dispatch would ever hit.
+private const val V2_OUTPUT_ARRAY_SIZE = 256
 
 private class AddDivergentCounters(
     private val shaderJob: ShaderJob,
@@ -133,7 +169,7 @@ private class AddDivergentCounters(
     }
 
     /**
-     * `local_invocation_id.x % Nu == 0u`. Splits invocations into two disjoint groups regardless of workgroup size. 
+     * `local_invocation_id.x % Nu == 0u`. Splits invocations into two disjoint groups regardless of workgroup size.
      * u32 (not i32) since local_invocation_id is vec3<u32>, so `.x` is u32, and WGSL's `%` requires both operands to share that type.
      */
     private fun modNCondition(n: Int = 2): Expression =
@@ -149,16 +185,9 @@ private class AddDivergentCounters(
         )
 
     /**
-     * Create <storage> input and output data.
-     * 1. Input data that represents thread to run. To avoid read ie. data access to be statically evaluated during compile-time and then optimized out.
-     * 2. Output data that represents the counter value.
-     * Both are I32 type.
+     * Create data structure for buffer to store thread to run, and counter value.
      */
-    private fun createInputOutputForV1(
-        inputBinding: String,
-        outputBinding: String,
-    ): Triple<GlobalDecl.Struct, GlobalDecl.Variable, GlobalDecl.Variable> {
-        val structDecl = GlobalDecl.Struct(
+    private fun createDataStruct(): GlobalDecl.Struct = GlobalDecl.Struct(
             name = "DynamicData_${fuzzerSettings.getUniqueId()}",
             members = listOf(
                 StructMember(
@@ -167,7 +196,13 @@ private class AddDivergentCounters(
                 ),
             ),
         )
-        val inputInstance = GlobalDecl.Variable(
+    /**
+     * Create <storage> input data that represents thread to run. To avoid read ie. data access to be statically evaluated during compile-time and then optimized out.
+     */
+    private fun createInputInstance(
+        inputBinding: String,
+        structName: String
+    ): GlobalDecl.Variable = GlobalDecl.Variable(
             attributes = listOf(
                 Attribute.Group(Expression.IntLiteral(text="0")), 
                 Attribute.Binding(Expression.IntLiteral(text=inputBinding))
@@ -175,11 +210,16 @@ private class AddDivergentCounters(
             name = "thread_to_run",
             addressSpace = AddressSpace.STORAGE,
             accessMode = AccessMode.READ,
-            typeDecl = TypeDecl.NamedType(structDecl.name),
+            typeDecl = TypeDecl.NamedType(structName),
             initializer = null,
         )
-
-        val outputInstance = GlobalDecl.Variable(
+    /**
+     * Create <storage> output data that will eventually hold counter value.
+     */
+    private fun createSingleOutputInstance(
+        outputBinding: String,
+        structName: String
+    ): GlobalDecl.Variable = GlobalDecl.Variable(
             attributes = listOf(
                 Attribute.Group(Expression.IntLiteral(text="0")), 
                 Attribute.Binding(Expression.IntLiteral(text=outputBinding))
@@ -187,11 +227,46 @@ private class AddDivergentCounters(
             name = "counter_output",
             addressSpace = AddressSpace.STORAGE,
             accessMode = AccessMode.READ_WRITE,
-            typeDecl = TypeDecl.NamedType(structDecl.name),
+            typeDecl = TypeDecl.NamedType(structName),
             initializer = null,
         )
-        return Triple(structDecl, inputInstance, outputInstance)
-    }
+
+
+    /**
+     * Create data structure for output buffer to store for multiple threads
+     * Fixed-size array of [V2_OUTPUT_ARRAY_SIZE] i32 slots, rather than a single shared scalar
+     * 1 slot per thread (indexed by local_invocation_index) -- to allow multi-thread execution where every invocation needs its own slot to avoid racing on the write.
+     */
+    private fun createMultiOutputStruct(): GlobalDecl.Struct = GlobalDecl.Struct(
+                name = "MultiOutput_${fuzzerSettings.getUniqueId()}",
+                members = listOf(
+                    StructMember(
+                        name = V2_STRUCT_MEMBER,
+                        typeDecl = TypeDecl.Array(
+                            elementType = TypeDecl.I32(),
+                            elementCount = Expression.IntLiteral("$V2_OUTPUT_ARRAY_SIZE"),
+                        ),
+                    ),
+                ),
+            )
+
+    /**
+     * Create <storage> output data for multi-threaded execution
+     */
+    private fun createMultiOutputInstance(
+        outputBinding: String,
+        structName: String
+    ): GlobalDecl.Variable = GlobalDecl.Variable(
+                attributes = listOf(
+                    Attribute.Group(Expression.IntLiteral(text = "0")),
+                    Attribute.Binding(Expression.IntLiteral(text = outputBinding)),
+                ),
+                name = "multi_counter_output",
+                addressSpace = AddressSpace.STORAGE,
+                accessMode = AccessMode.READ_WRITE,
+                typeDecl = TypeDecl.NamedType(structName),
+                initializer = null,
+            )
 
     /**
      * Select only a single thread to run, early return for other threads.
@@ -221,6 +296,43 @@ private class AddDivergentCounters(
             initializer = Expression.IntLiteral("999i"),
             metadata = setOf(AddedIdentifier(counterName)),
         )
+
+    private fun createIncrementStatement(
+        targetName: String,
+        magnitude: Expression,
+        id: Int,
+    ): Statement.If =
+        Statement.If(
+            condition = modNCondition(n = 1),
+            thenBranch =
+                Statement.Compound(
+                    listOf(
+                        Statement.Assignment(
+                            lhsExpression = LhsExpression.Identifier(targetName),
+                            assignmentOperator = AssignmentOperator.PLUS_EQUAL,
+                            rhs = Expression.IntLiteral("3"),
+                        ),
+                    ),
+                ),
+        )
+
+    private fun createDecrementStatement(
+        targetName: String,
+    ): Statement.If =
+        Statement.If(
+            condition = modNCondition(n = 1),
+            thenBranch =
+                Statement.Compound(
+                    listOf(
+                        Statement.Assignment(
+                            lhsExpression = LhsExpression.Identifier(targetName),
+                            assignmentOperator = AssignmentOperator.MINUS_EQUAL,
+                            rhs = Expression.IntLiteral("3"),
+                        ),
+                    ),
+                ),
+        )
+
 
     private fun createDivergentCounterPair(): List<Statement> {
         val id = fuzzerSettings.getUniqueId() // both conditions share a single id, so that both deleted together
@@ -259,10 +371,57 @@ private class AddDivergentCounters(
     }
 
     /**
+     * Converts an LhsExpression back into a readable Expression, following the same path
+     * (identifier/member/index/paren). [firstScalarLeaf] only ever builds targets out of these node
+     * kinds, so Dereference/AddressOf are unreachable here.
+     */
+    private fun lhsExprToExpr(lhs: LhsExpression): Expression =
+        when (lhs) {
+            is LhsExpression.Identifier -> Expression.Identifier(lhs.name)
+            is LhsExpression.Paren -> Expression.Paren(lhsExprToExpr(lhs.target))
+            is LhsExpression.MemberLookup -> Expression.MemberLookup(lhsExprToExpr(lhs.receiver), lhs.memberName)
+            is LhsExpression.IndexLookup -> Expression.IndexLookup(lhsExprToExpr(lhs.target), lhs.index.clone())
+            is LhsExpression.Dereference, is LhsExpression.AddressOf ->
+                error("firstScalarLeaf never produces a Dereference/AddressOf target")
+        }
+
+    /**
+     * `if (<indexExpr> < V2_OUTPUT_ARRAY_SIZEu) { <outputBufferName>.data[<indexExpr>] = i32(<target>); }`
+     * Bounds-checked so a workgroup with more threads than [V2_OUTPUT_ARRAY_SIZE] just skips the write for its excess threads
+     */
+    private fun createIndexedOutputWrite(
+        outputBufferName: String,
+        indexExpr: Expression,
+        target: LhsExpression,
+    ): Statement =
+        Statement.If(
+            condition =
+                Expression.Binary(
+                    operator = BinaryOperator.LESS_THAN,
+                    lhs = indexExpr.clone(),
+                    rhs = Expression.IntLiteral("${V2_OUTPUT_ARRAY_SIZE}u"),
+                ),
+            thenBranch =
+                Statement.Compound(
+                    listOf(
+                        Statement.Assignment(
+                            lhsExpression =
+                                LhsExpression.IndexLookup(
+                                    LhsExpression.MemberLookup(LhsExpression.Identifier(outputBufferName), V2_STRUCT_MEMBER),
+                                    indexExpr.clone(),
+                                ),
+                            assignmentOperator = AssignmentOperator.EQUAL,
+                            rhs = Expression.I32ValueConstructor(listOf(lhsExprToExpr(target))),
+                        ),
+                    ),
+                ),
+        )
+
+    /**
      * The shader's output buffer: the module-scope `var<storage, read_write>`.
      * wgslsmith emits exactly one (`s_output`); if a shader somehow has several, the first is used, since that is also the one the harness dumps first.
      */
-    private fun findOutputBuffer(): GlobalDecl.Variable? =
+    private fun findExistingOutputBuffer(): GlobalDecl.Variable? =
         shaderJob.tu.globalDecls
             .filterIsInstance<GlobalDecl.Variable>()
             .firstOrNull { it.addressSpace == AddressSpace.STORAGE && it.accessMode == AccessMode.READ_WRITE }
@@ -271,7 +430,6 @@ private class AddDivergentCounters(
     
     /**
      * Walks [type] down to its first scalar leaf, extending [base] with the member/index lookups needed to name that leaf. 
-     * Used to obtain expr and type of the 0th ele in output buffer
      */
     private fun firstScalarLeaf(
         base: LhsExpression,
@@ -292,13 +450,14 @@ private class AddDivergentCounters(
                     firstScalarLeaf(LhsExpression.IndexLookup(base, zeroIndex()), type.elementType, depth + 1)
                 }
             is TypeDecl.NamedType -> {
-                val member =
+                val members =
                     shaderJob.tu.globalDecls
                         .filterIsInstance<GlobalDecl.Struct>()
                         .firstOrNull { it.name == type.name }
-                        ?.members
-                        ?.firstOrNull() ?: return null
-                firstScalarLeaf(LhsExpression.MemberLookup(base, member.name), member.typeDecl, depth + 1)
+                        ?.members ?: return null
+                members.firstNotNullOfOrNull { member ->
+                    firstScalarLeaf(LhsExpression.MemberLookup(base, member.name), member.typeDecl, depth + 1)
+                }
             }
             else -> null
         }
@@ -306,11 +465,10 @@ private class AddDivergentCounters(
 
     /**
      * `<output>.<..first scalar..> = <scalarType>(<counter>);`
-     *
-     * Returns null when the shader has no output buffer.
+     * Returns null when the shader has no output buffer. (v0)
      */
     private fun createCounterOverwrite(): Statement? {
-        val outputBuffer = findOutputBuffer() ?: return null
+        val outputBuffer = findExistingOutputBuffer() ?: return null
         val (lhs, scalarType) =
             firstScalarLeaf(LhsExpression.Identifier(outputBuffer.name), outputBuffer.typeDecl ?: return null, 0)
                 ?: return null
@@ -345,6 +503,205 @@ private class AddDivergentCounters(
             rhs = Expression.I32ValueConstructor(listOf(counter)),
         )
     }
+
+    // --- v2: local-variable candidate selection -------------------------------------------------
+
+    /** The variable name at the root of an lvalue chain (through member/index/paren/deref), or null. */
+    private fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
+        when (lhs) {
+            is LhsExpression.Identifier -> lhs.name
+            is LhsExpression.MemberLookup -> lhsBaseIdentifierName(lhs.receiver)
+            is LhsExpression.IndexLookup -> lhsBaseIdentifierName(lhs.target)
+            is LhsExpression.Paren -> lhsBaseIdentifierName(lhs.target)
+            is LhsExpression.Dereference -> lhsBaseIdentifierName(lhs.target)
+            is LhsExpression.AddressOf -> lhsBaseIdentifierName(lhs.target)
+            null -> null
+        }
+
+    /** True if [expr] contains a genuine read of `name` (an Expression.Identifier) as opposed to an Lhs value (which could be a write). */
+    private fun expressionReadsIdentifier(
+        expr: Expression,
+        name: String,
+    ): Boolean = nodesPreOrder(expr).any { it is Expression.Identifier && it.name == name }
+
+    /**
+     * True if [statement] reads [name]. Every Expression.Identifier occurrence is a genuine read
+     */
+    private fun statementReadsIdentifier(
+        statement: Statement,
+        name: String,
+    ): Boolean {
+        for (node in nodesPreOrder(statement)) {
+            if (node is Expression.Identifier && node.name == name) return true
+            // For compound assignment (self-referential) statements, the lhs is also considered a read
+            if (node is Statement.Assignment && node.assignmentOperator != AssignmentOperator.EQUAL) {
+                val lhsName = lhsBaseIdentifierName(node.lhsExpression)
+                if (lhsName == name) return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * True if [statement] is a jump that could leave the enclosing loop/function before a later
+     * statement in the same Compound ie. scope runs (Break, Return, Discard). Continue is deliberately excluded:
+     * it only skips to the next loop iteration, and the write refreshes the variable before it's read again,
+     * so a decrement stranded by a Continue is never actually observed by a stale read.
+     */
+    private fun isDisqualifyingExit(statement: Statement): Boolean =
+        statement is Statement.Break || statement is Statement.Return || statement is Statement.Discard
+
+    /** True if [statement] is a plain (`=`) reassignment of [name] that does NOT also read it
+     *  Excludes compound assignment, which is captured as a READ
+     */
+    private fun statementReassignsIdentifier(
+        statement: Statement,
+        name: String,
+    ): Boolean =
+        statement is Statement.Assignment &&
+            statement.assignmentOperator == AssignmentOperator.EQUAL &&
+            (statement.lhsExpression as? LhsExpression.Identifier)?.name == name
+
+    /**
+     * Index of the first statement after [fromIndex] that reads [name], or null if:
+     * - it's never read, or
+     * - a Break/Return/Discard sits between [fromIndex] and that read could let an increment fire without its paired decrement ever running, or
+     * - if a write is encountered, just continue searching for a read
+     */
+    private fun collectReadIndices(
+        statements: List<Statement>,
+        fromIndex: Int,
+        name: String,
+    ): List<Int> {
+        val reads = mutableListOf<Int>()
+        for (index in (fromIndex + 1) until statements.size) {
+            val statement = statements[index]
+            if (isDisqualifyingExit(statement)) return reads
+            if (statementReadsIdentifier(statement, name)) reads.add(index)
+        }
+        return reads
+    }
+
+    /** Describes one selected local-variable target inside a single Compound.
+     * [declIndex] is null when the injection scope is a descendant of the declaring scope
+     */
+    private data class LocalVariableTarget(
+        val compound: Statement.Compound,
+        val target: LhsExpression,
+        val targetType: TypeDecl.ScalarTypeDecl,
+        val declIndex: Int?,
+        val readIndices: Int,
+    )
+
+    /** One `var` declaration: where it lives (scope + index) and the scalar lvalue/type v2 would target. */
+    private data class Declaration(
+        val name: String,
+        val target: LhsExpression,
+        val targetType: TypeDecl.ScalarTypeDecl,
+        val scope: Statement.Compound,
+        val index: Int,
+    )
+
+    /** Bundles the outputs of a single-statement, scope-stopping walk: see [collectDirectScopeInfo]. */
+    private class DirectScopeInfo {
+        val readNames = mutableSetOf<String>()
+        val nestedCompounds = mutableListOf<Statement.Compound>()
+    }
+
+    /**
+     * Collects, from [node] downward, every identifier genuinely read "in the current scope" -- ie.
+     * without crossing into a nested Statement.Compound, which is a scope boundary of its own and
+     * gets walked separately by the caller. Also collects every Compound reachable this way, so the
+     * caller knows which nested scopes to recurse into next. Mirrors statementReadsIdentifier's
+     * handling of compound assignment (`x += ...`) counting as a read of `x`.
+     */
+    private fun collectDirectScopeInfo(
+        node: AstNode,
+        info: DirectScopeInfo,
+    ) {
+        when (node) {
+            is Statement.Compound -> {
+                info.nestedCompounds.add(node)
+                return
+            }
+            is Expression.Identifier -> info.readNames.add(node.name)
+            is Statement.Assignment ->
+                if (node.assignmentOperator != AssignmentOperator.EQUAL) {
+                    lhsBaseIdentifierName(node.lhsExpression)?.let { info.readNames.add(it) }
+                }
+            else -> {}
+        }
+        traverse(::collectDirectScopeInfo, node, info)
+    }
+
+    /**
+     * Walks [path] (ordered outer -> inner: [0] is the declaring scope, last is the read's own
+     * innermost scope), starting at the declaring scope and flipping a coin at each nested-scope
+     * boundary: 50% chance to descend further toward the read, 50% chance to stop at the current
+     * scope. Geometrically biases toward outer scopes while still being able to reach all the way in.
+     */
+    private fun chooseInjectionScope(path: List<Statement.Compound>): Statement.Compound {
+        var chosen = 0
+        for (i in 1 until path.size) {
+            if (!fuzzerSettings.randomBool()) break
+            chosen = i
+        }
+        return path[chosen]
+    }
+
+    /**
+     * Walks [body], treating every Statement.Compound as a lexical scope, to find local `var`
+     * declarations that resolve to a scalar via firstScalarLeaf. Each selected target is rewritten
+     * in the same Compound that contains the declaration, with the increment/decrement pair spliced
+     * in immediately after the declaration statement itself.
+     */
+    private fun findLocalVariableCandidates(body: Statement.Compound): List<LocalVariableTarget> {
+        fun walk(
+            compound: Statement.Compound,
+            targets: MutableList<LocalVariableTarget>,
+        ) {
+            val statements = compound.statements
+
+            for (index in statements.indices) {
+                val statement = statements[index]
+                val info = DirectScopeInfo()
+                collectDirectScopeInfo(statement, info)
+
+                if (statement is Statement.Variable) {
+                    statement.typeDecl?.let { typeDecl ->
+                        firstScalarLeaf(LhsExpression.Identifier(statement.name), typeDecl, 0)?.let { (target, targetType) ->
+                            targets.add(
+                                LocalVariableTarget(
+                                    compound = compound,
+                                    target = target,
+                                    targetType = targetType,
+                                    declIndex = index,
+                                    readIndices = index,
+                                ),
+                            )
+                        }
+                    }
+                }
+
+                if (info.nestedCompounds.isNotEmpty()) {
+                    for (nested in info.nestedCompounds) {
+                        walk(nested, targets)
+                    }
+                }
+            }
+        }
+
+        val targets = mutableListOf<LocalVariableTarget>()
+        walk(body, targets)
+        return targets
+    }
+
+    /**
+     * Applies fuzzerSettings' random gate to each candidate independently (mirrors the per-slot
+     * injectDivergentCounter() gating v0/v1 use for their counter-pair injection points).
+     */
+    private fun selectLocalVariableTargets(candidates: List<LocalVariableTarget>): List<LocalVariableTarget> =
+        candidates.filter { fuzzerSettings.injectDivergentCounter() }
 
     private fun selectInjectionPoints(
         node: AstNode,
@@ -383,6 +740,44 @@ private class AddDivergentCounters(
                 }
             }
             Statement.Compound(newBody, compound.metadata)
+        }
+
+    /** Bundles what [injectLocalVariableCounters] needs to thread through the recursive clone. */
+    private data class V2InjectionContext(
+        val injectionsByCompound: Map<Statement.Compound, List<Pair<LocalVariableTarget, Int>>>,
+        val magnitude: Expression,
+        val outputBufferName: String,
+        val indexExpr: Expression,
+    )
+
+    /**
+     * Rewrites every Compound present in [V2InjectionContext.injectionsByCompound], splicing in
+     * the increment/decrement pair immediately after each selected target declaration.
+     * All targets for a Compound are handled in one pass so recursive rewrites of nested
+     * statements do not disturb the original statement indices.
+     */
+    private fun injectLocalVariableCounters(
+        node: AstNode,
+        ctx: V2InjectionContext,
+    ): AstNode? =
+        ctx.injectionsByCompound[node]?.let { targets ->
+            val compound = node as Statement.Compound
+            val newStatements = mutableListOf<Statement>()
+            for (index in compound.statements.indices) {
+                val statement = compound.statements[index]
+                newStatements.add(statement.clone { injectLocalVariableCounters(it, ctx) })
+
+                if (statement is Statement.Variable) {
+                    val targetName = statement.name
+                    for ((target, id) in targets) {
+                        if (target.declIndex != index) continue
+                        if (lhsBaseIdentifierName(target.target) != targetName) continue
+                        newStatements.add(createIncrementStatement(targetName, ctx.magnitude, id))
+                        newStatements.add(createDecrementStatement(targetName))
+                    }
+                }
+            }
+            Statement.Compound(newStatements, compound.metadata)
         }
 
     fun applyV0(): ShaderJob {
@@ -477,8 +872,9 @@ private class AddDivergentCounters(
         val inputBinding = (prevBinding + 1).toString()
         val outputBinding = (prevBinding + 2).toString()
 
-        val (structDecl, inputInstance, outputInstance) =
-            createInputOutputForV1(inputBinding, outputBinding)
+        val structDecl = createDataStruct()
+        val inputInstance = createInputInstance(inputBinding, structDecl.name)
+        val outputInstance = createSingleOutputInstance(outputBinding, structDecl.name)
 
         val newGlobalDecls =
             shaderJob.tu.globalDecls.map { decl ->
@@ -559,6 +955,95 @@ private class AddDivergentCounters(
             pipelineState = shaderJob.pipelineState,
         )
     }
+    /**
+     * v2: hijacks an existing local variable's write/read pair rather than injecting a fresh counter,
+     * and lets every invocation actually run concurrently (no early-return gating) since each
+     * invocation now owns its own output slot -- see [createInputOutputForV2] / [createIndexedCounterWrite].
+     */
+    fun applyV2(): ShaderJob {
+        val prevBinding = largestBindingForGroup(0) ?: -1
+        val inputBinding = (prevBinding + 1).toString()
+        val outputBinding = (prevBinding + 2).toString()
+
+        val inputStruct = createDataStruct()
+        val inputBuffer = createInputInstance(inputBinding, inputStruct.name)
+        val outputStruct = createMultiOutputStruct()
+        val outputBuffer = createMultiOutputInstance(outputBinding, outputStruct.name)
+
+        val magnitude = Expression.MemberLookup(Expression.Identifier(inputBuffer.name), V2_STRUCT_MEMBER)
+
+        val newGlobalDecls =
+            shaderJob.tu.globalDecls.map { decl ->
+                // Only focus on compute functions
+                if (decl !is GlobalDecl.Function || decl.attributes.none { it is Attribute.Compute }) {
+                    return@map decl
+                }
+
+                val candidates = findLocalVariableCandidates(decl.body)
+                val selected = selectLocalVariableTargets(candidates)
+
+                // Return original decl if no candidate was selected
+                if (selected.isEmpty()) {
+                    return@map decl
+                }
+
+                var parameters = decl.parameters
+
+                val existingLid = findExistingLID(decl)
+                lidExpr =
+                    if (existingLid != null) {
+                        existingLid
+                    } else {
+                        val (newParameter, expr) = synthesizeLocalInvocationIdParameter()
+                        parameters = parameters + newParameter
+                        expr
+                    }
+
+                val existingIndex = findExistingLID(decl)
+                val indexExpr =
+                    if (existingIndex != null) {
+                        existingIndex
+                    } else {
+                        val (newParameter, expr) = synthesizeLocalInvocationIdParameter()
+                        parameters = parameters + newParameter
+                        expr
+                    }
+
+                val injectionsByCompound =
+                    selected
+                        .map { it to fuzzerSettings.getUniqueId() }
+                        .groupBy({ (target, _) -> target.compound }, { it })
+
+                val ctx =
+                    V2InjectionContext(
+                        injectionsByCompound = injectionsByCompound,
+                        magnitude = magnitude,
+                        outputBufferName = outputBuffer.name,
+                        indexExpr = indexExpr,
+                    )
+                val injectedBody = decl.body.clone { injectLocalVariableCounters(it, ctx) }
+
+                GlobalDecl.Function(
+                    attributes = decl.attributes,
+                    name = decl.name,
+                    parameters = parameters,
+                    returnAttributes = decl.returnAttributes,
+                    returnType = decl.returnType,
+                    body = injectedBody,
+                    metadata = decl.metadata,
+                )
+            }
+
+        return ShaderJob(
+            tu =
+                TranslationUnit(
+                    shaderJob.tu.directives,
+                    listOf(inputStruct, outputStruct, inputBuffer, outputBuffer) + newGlobalDecls,
+                    shaderJob.tu.metadata,
+                ),
+            pipelineState = shaderJob.pipelineState,
+        )
+    }
 }
 
 fun addDivergentCountersV0(
@@ -578,3 +1063,12 @@ fun addDivergentCountersV1(
         shaderJob,
         fuzzerSettings,
     ).applyV1()
+
+fun addDivergentCountersV2(
+    shaderJob: ShaderJob,
+    fuzzerSettings: FuzzerSettings,
+): ShaderJob =
+    AddDivergentCounters(
+        shaderJob,
+        fuzzerSettings,
+    ).applyV2()

@@ -33,6 +33,7 @@ fun initMetamorphicTransformations(
         ::addIdentityOperations,
         ::addDivergentCountersV0,
         ::addDivergentCountersV1,
+        ::addDivergentCountersV2,
         addControlFlowWrappers(transformedDonorShaderJob),
     )
 }
