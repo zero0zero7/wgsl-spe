@@ -154,3 +154,21 @@ private fun expressionReadsIdentifier(
 
 
 private fun zeroIndex(): Expression = Expression.IntLiteral("0i")
+
+/**
+ * Reads @group (isGroup = true) / @binding (isGroup = false) integer.
+ * Returns null if the attribute is absent / not an integer literal.
+ */
+private fun intAttribute(globalVar: GlobalDecl.Variable, isGroup: Boolean): Int? {
+	for (attr in globalVar.attributes) {
+		val expr =
+			when {
+				isGroup && attr is Attribute.Group -> attr.expression
+				!isGroup && attr is Attribute.Binding -> attr.expression
+				else -> null
+			} ?: continue
+		val literal = expr as? Expression.IntLiteral ?: continue
+		return literal.text.trimEnd('i', 'u', 'U', 'I').toIntOrNull()
+	}
+	return null
+}

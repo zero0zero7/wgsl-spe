@@ -96,7 +96,7 @@ private fun threadToRunInputInstance(
 /**
  * Create <storage, read_write> output data
  */
-private fun outputInstance(
+private fun scalarOutputInstance(
 	outputBinding: String,
 	structName: String,
 	outputName: String
