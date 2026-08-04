@@ -1,5 +1,7 @@
 package com.wgslfuzz.semanticspreservingtransformations
 
+import kotlin.random.Random
+
 import com.wgslfuzz.core.AccessMode
 import com.wgslfuzz.core.AddedIdentifier
 import com.wgslfuzz.core.AddressSpace
@@ -58,7 +60,7 @@ import com.wgslfuzz.semanticspreservingtransformations.DivergentCreators.*
 //
 // v2: similar to v1 except
 // - Instead of a synthesized counter variable, an EXISTING local variable already used by the entry
-//   point is hijacked as the target: it must be a local (function-scope `var`), reduced to a scalar
+//   point is hijacked as the target: it must be a local (function-scope `var`), reduced to a, scalar
 //   leaf via firstScalarLeaf() if it isn't already scalar, written, and later read.
 // - Increment and Decrement are no longer adjacent: the increment goes right after the write, the
 //   decrement right before the read, so real code can sit between them. Both are still gated by the
@@ -95,6 +97,7 @@ import com.wgslfuzz.semanticspreservingtransformations.DivergentCreators.*
 // or local_invocation_id into callees, so functions called from the entry point are untouched.
 
 private typealias DivergentCounterInjections = MutableMap<Statement.Compound, Set<Int>>
+private data class NestingInfo(val curr: Statement.Compound, var nested: MutableList<NestingInfo>)
 
 // Guards the first-scalar walk against a pathological chain of nested aggregates
 // (and against a struct that somehow refers to itself, which would otherwise not terminate).
@@ -124,6 +127,32 @@ private class AddDivergentInjections(
 
     private lateinit var incrementValue: Expression
     private lateinit var decrementValue: Expression
+
+    /**
+     * Finds an expression that reads local_invocation_id from an EXISTING parameter (directly, or via a struct parameter).
+     * Returns null if none is present yet.
+     */
+    private fun findExistingLID(function: GlobalDecl.Function): Expression? {
+        for (parameter in function.parameters) {
+            val hasLID = parameter.attributes.filterIsInstance<Attribute.Builtin>().any { it.name == BuiltinValue.LOCAL_INVOCATION_ID }
+            if (hasLID) {
+                return Expression.Identifier(parameter.name)
+            }
+        }
+        for (parameter in function.parameters) {
+            val structName = (parameter.typeDecl as? TypeDecl.NamedType)?.name ?: continue
+            val structDecl =
+                shaderJob.tu.globalDecls
+                    .filterIsInstance<GlobalDecl.Struct>()
+                    .firstOrNull { it.name == structName } ?: continue
+            val member =
+                structDecl.members.firstOrNull { member ->
+                    member.attributes.filterIsInstance<Attribute.Builtin>().any { it.name == BuiltinValue.LOCAL_INVOCATION_ID }
+                } ?: continue
+            return Expression.MemberLookup(Expression.Identifier(parameter.name), member.name)
+        }
+        return null
+    }
 
     /**
      * Walks [type] down to its first scalar leaf, extending [base] with the member/index lookups needed to name that leaf. 
@@ -160,18 +189,6 @@ private class AddDivergentInjections(
         }
     }
 
-    
-    /**
-     * For counter value. v1.
-     */
-    private fun createSingleOutputInstance(
-        outputBinding: String,
-        structName: String
-    ): GlobalDecl.Variable = outputInstance(
-            outputBinding = outputBinding,
-            structName = structName,
-            outputName = "counter_output",
-        )
 
     /**
      * For multi-threaded execution. v2
@@ -179,10 +196,16 @@ private class AddDivergentInjections(
     private fun createMultiOutputInstance(
         outputBinding: String,
         structName: String,
-    ): GlobalDecl.Variable = outputInstance(
-            outputBinding = outputBinding,
-            structName = structName,
-            outputName = "multithread_output",
+    ): GlobalDecl.Variable = GlobalDecl.Variable(
+        attributes = listOf(
+            Attribute.Group(Expression.IntLiteral("0")),
+            Attribute.Binding(Expression.IntLiteral(outputBinding)),
+        ),
+        name = "multithread_output",
+        addressSpace = AddressSpace.STORAGE,
+        accessMode = AccessMode.READ_WRITE,
+        typeDecl = TypeDecl.NamedType(structName),
+        initializer = null,
         )
 
     /**
@@ -363,13 +386,17 @@ private class AddDivergentInjections(
     }
 
     /**
+     * For v2
      * Walks [body], treating every Statement.Compound as a lexical scope
-     * Finds local `var` declarations that resolve to a scalar via firstScalarLeaf. 
+     * Finds local `var` declarations that resolve to a scalar via firstScalarLeaf.
+     * Returns a "linked list" of NestingInfo, by return the head ie. the statement.compound that represents the entrypoint function's body
      */
-    private fun findLocalVariableCandidates(body: Statement.Compound): List<LocalVariableTarget> {
+    private fun findLocalVariableCandidates(body: Statement.Compound):
+            Pair<NestingInfo, List<LocalVariableTarget>> {
         fun walk(
             compound: Statement.Compound,
             declarations: MutableList<LocalVariableTarget>,
+            currNest: NestingInfo
         ) {
             val statements = compound.statements
 
@@ -399,16 +426,18 @@ private class AddDivergentInjections(
                 }
 
                 if (info.nestedCompounds.isNotEmpty()) {
-                    for (nested in info.nestedCompounds) {
-                        walk(nested, declarations)
+                    for (comp in info.nestedCompounds) {
+                        currNest.nested.add(NestingInfo(curr=comp, nested=mutableListOf<NestingInfo>()))
+                        walk(comp, declarations, currNest)
                     }
                 }
             }
         }
 
         val declarations = mutableListOf<LocalVariableTarget>()
-        walk(body, declarations)
-        return declarations
+        val nestingInfo = NestingInfo(curr=body, nested=mutableListOf<NestingInfo>())
+        walk(body, declarations, nestingInfo)
+        return nestingInfo to declarations
     }
 
     /**
@@ -465,36 +494,6 @@ private class AddDivergentInjections(
             Statement.Compound(newBody, compound.metadata)
         }
 
-    /**
-     * Rewrites every Compound present in [V2InjectionContext.injectionsByCompound], splicing in
-     * the increment/decrement pair immediately after each selected target declaration.
-     * All targets for a Compound are handled in one pass so recursive rewrites of nested
-     * statements do not disturb the original statement indices.
-     */
-    private fun injectLocalVariableCounters(
-        node: AstNode,
-        ctx: V2InjectionContext,
-    ): AstNode? =
-        ctx.injectionsByCompound[node]?.let { targets ->
-            val compound = node as Statement.Compound
-            val newStatements = mutableListOf<Statement>()
-            for (index in compound.statements.indices) {
-                val statement = compound.statements[index]
-                newStatements.add(statement.clone { injectLocalVariableCounters(it, ctx) })
-
-                if (statement is Statement.Variable) {
-                    val targetName = statement.name
-                    for ((target, id) in targets) {
-                        if (target.declIndex != index) continue
-                        if (lhsBaseIdentifierName(target.target) != targetName) continue
-                        newStatements.add(createModifyStatement(targetName, Expression.Binary(operator=BinaryOperator.PLUS, lhs=LhsExpression.Identifier(targetName), rhs=Expression.IntLiteral(ctx.magnitude), id)))
-                        newStatements.add(createModifyStatement(targetName, Expression.Binary(operator=BinaryOperator.MINUS, lhs=LhsExpression.Identifier(targetName), rhs=Expression.IntLiteral(ctx.magnitude), id)))
-                    }
-                }
-            }
-            Statement.Compound(newStatements, compound.metadata)
-        }
-
 
     fun applyV0(): ShaderJob {
         val newGlobalDecls =
@@ -530,7 +529,7 @@ private class AddDivergentInjections(
                 val injectedBody = decl.body.clone { injectDivergentInjections(it, injections, counterWrite) }
 
                 val statements = mutableListOf<Statement>()
-                statements.add(counterInstance())
+                statements.add(counterInstance(993, "injected_counter"))
                 statements.addAll(injectedBody.statements)
                 if (counterWrite != null && injectedBody.statements.lastOrNull() !is Statement.Return) {
                     statements.add(counterWrite.clone())
@@ -596,7 +595,7 @@ private class AddDivergentInjections(
                     if (existing != null) {
                         existing
                     } else {
-                        val (newParameter, expr) = synthesizeLIDParameter(fuzzerSettings.getUniqueId())
+                        val (newParameter, expr) = lidParameter(fuzzerSettings.getUniqueId())
                         parameters = parameters + newParameter
                         expr
                     }
@@ -617,7 +616,7 @@ private class AddDivergentInjections(
                 val injectedBody = decl.body.clone { injectDivergentInjections(it, injections, counterWrite) }
 
                 val statements = mutableListOf<Statement>()
-                statements.add(counterInstance())
+                statements.add(counterInstance(999, "injected_counter"))
                 statements.addAll(injectedBody.statements)
                 if (counterWrite != null && injectedBody.statements.lastOrNull() !is Statement.Return) {
                     statements.add(counterWrite.clone())
@@ -662,6 +661,7 @@ private class AddDivergentInjections(
         val outputBufferName: String,
         val indexExpr: Expression,
     )
+    
 
     /**
      * v2: hijacks an existing local variable's write/read pair rather than injecting a fresh counter,
@@ -669,27 +669,26 @@ private class AddDivergentInjections(
      * invocation now owns its own output slot -- see [createInputOutputForV2] / [createIndexedCounterWrite].
      */
     fun applyV2(): ShaderJob {
-        val prevBinding = largestBindingForGroup(0) ?: -1
+        val prevBinding = lastBindingForGroup(0) ?: -1
         val inputBinding = (prevBinding + 1).toString()
         val outputBinding = (prevBinding + 2).toString()
 
-        val inputStruct = createDataStruct()
-        val inputBuffer = createThreadToRunInputInstance(inputBinding, inputStruct.name)
-        val outputStruct = createMultiOutputStruct()
+        val inputStruct = dataStruct(fuzzerSettings.getUniqueId())
+        val inputBuffer = threadToRunInputInstance(inputBinding, inputStruct.name)
+        val outputStruct = multiOutputStruct(fuzzerSettings.getUniqueId(), 256)
         val outputBuffer = createMultiOutputInstance(outputBinding, outputStruct.name)
 
         val magnitude = Expression.MemberLookup(Expression.Identifier(inputBuffer.name), V2_STRUCT_MEMBER)
 
         val newGlobalDecls =
             shaderJob.tu.globalDecls.map { decl ->
-                // Only focus on compute functions
                 if (decl !is GlobalDecl.Function || decl.attributes.none { it is Attribute.Compute }) {
                     return@map decl
                 }
 
-                val candidates = findLocalVariableCandidates(decl.body)
-
-                val selected = selectLocalVariableTargets(candidates)
+                // For each compute entrypoint, recursively find and randomly select local variables, noting their declaration compound and index, datatype
+                val (nestingInfo, candidates)  = findLocalVariableCandidates(decl.body)
+                val selected :List<LocalVariableTarget> = selectLocalVariableTargets(candidates)
 
                 // Return original decl if no candidate was selected
                 if (selected.isEmpty()) {
@@ -697,40 +696,58 @@ private class AddDivergentInjections(
                 }
 
                 var parameters = decl.parameters
-
                 val existingLid = findExistingLID(decl)
                 lidExpr =
                     if (existingLid != null) {
                         existingLid
                     } else {
-                        val (newParameter, expr) = synthesizeLIDParameter(fuzzerSettings.getUniqueId())
+                        val (newParameter, expr) = lidParameter(fuzzerSettings.getUniqueId())
                         parameters = parameters + newParameter
                         expr
                     }
 
-                val existingIndex = findExistingLID(decl)
-                val indexExpr =
-                    if (existingIndex != null) {
-                        existingIndex
-                    } else {
-                        val (newParameter, expr) = synthesizeLIDParameter(fuzzerSettings.getUniqueId())
-                        parameters = parameters + newParameter
-                        expr
-                    }
-
+                // Map<CompoundStatement, List<Pair<Target, Id>>>
+                // Groups targets by their declaration compound
                 val injectionsByCompound =
                     selected
                         .map { it to fuzzerSettings.getUniqueId() }
-                        .groupBy({ (target, _) -> target.compound }, { it })
+                        .groupBy({ (target, _) -> target.declCompound }, { it })
 
-                val ctx =
-                    V2InjectionContext(
-                        injectionsByCompound = injectionsByCompound,
-                        magnitude = magnitude,
-                        outputBufferName = outputBuffer.name,
-                        indexExpr = indexExpr,
-                    )
-                val injectedBody = decl.body.clone { injectLocalVariableCounters(it, ctx) }
+                // For each compound, (starting from the outermost ie. the entrypoint function body)
+                var stack = ArrayDequeue<NestingInfo>
+                stack.addLast(nestingInfo)
+                while (stack.isNotEmpty()) {
+                    var currentNest = stack.pop()
+                    var currentCompound = currentNest.currentCompound
+                    for (nested in currentNest.nested) { stack.addLast(nested) }
+                    var qualifiedTargets = injectionsByCompound[currentCompound]
+                    // Select a random local variable as target
+                    var (target, id) = qualifiedTargets.random()
+                    if (target.declCompound == currentCompound) {
+                        assert(target.declIndex != null)
+                        if (target.declIndex != null) {
+                            val index1 = random.nextInt(target.declIndex + 1, currentCompound.statements.size + 1)
+                            val index2 = random.nextInt(target.declIndex + 1, currentCompound.statements.size + 1)
+                        }
+                    }
+                    else {
+                        val index1 = random.nextInt(0, currentCompound.statements.size+1)
+                        val index2 = random.nextInt(0, currentCompound.statements.size+1)
+                    }
+                    val fixCondition = singleThreadCondition(lidExpr.clone(), Expression.MemberLookup(Expression.Identifier(inputBuffer.name), "data"), true)
+                    val unfixCondition = singleThreadCondition(lidExpr.clone(), Expression.MemberLookup(Expression.Identifier(inputBuffer.name), "data"), true)
+                    // Inject from bottom of compound
+                    val unfixStatement = modificationStatement(unfixCondition, target.target, Expression.Binary(BinaryOperator.PLUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")), id)
+                    val fixStatement = modificationStatement(fixCondition, target.target, Expression.Binary(BinaryOperator.MINUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")), id)
+                    if (index1 >= index2) {
+                        currentCompound.statements.add(index1, unfixStatement)
+                        currentCompound.statements.add(index2, fixStatement)
+                    }
+                    else {
+                        currentCompound.statements.add(index2, unfixStatement)
+                        currentCompound.statements.add(index1, fixStatement)
+                    }
+                }
 
                 GlobalDecl.Function(
                     attributes = decl.attributes,
@@ -738,7 +755,7 @@ private class AddDivergentInjections(
                     parameters = parameters,
                     returnAttributes = decl.returnAttributes,
                     returnType = decl.returnType,
-                    body = injectedBody,
+                    body = nestingInfo.currentCompound,
                     metadata = decl.metadata,
                 )
             }

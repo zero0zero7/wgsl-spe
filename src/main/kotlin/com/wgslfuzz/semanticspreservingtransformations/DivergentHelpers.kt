@@ -24,31 +24,7 @@ import com.wgslfuzz.core.traverse
 
 
 // ---------  EXISTING ----------
-/**
- * Finds an expression that reads local_invocation_id from an EXISTING parameter (directly, or via a struct parameter).
- * Returns null if none is present yet.
- */
-internal fun findExistingLID(function: GlobalDecl.Function): Expression? {
-	for (parameter in function.parameters) {
-		val hasLID = parameter.attributes.filterIsInstance<Attribute.Builtin>().any { it.name == BuiltinValue.LOCAL_INVOCATION_ID }
-		if (hasLID) {
-			return Expression.Identifier(parameter.name)
-		}
-	}
-	for (parameter in function.parameters) {
-		val structName = (parameter.typeDecl as? TypeDecl.NamedType)?.name ?: continue
-		val structDecl =
-			shaderJob.tu.globalDecls
-				.filterIsInstance<GlobalDecl.Struct>()
-				.firstOrNull { it.name == structName } ?: continue
-		val member =
-			structDecl.members.firstOrNull { member ->
-				member.attributes.filterIsInstance<Attribute.Builtin>().any { it.name == BuiltinValue.LOCAL_INVOCATION_ID }
-			} ?: continue
-		return Expression.MemberLookup(Expression.Identifier(parameter.name), member.name)
-	}
-	return null
-}
+
 
 
 
@@ -56,7 +32,7 @@ internal fun findExistingLID(function: GlobalDecl.Function): Expression? {
  * Converts an LhsExpression back into a readable Expression, following the same path
  * [firstScalarLeaf] only ever builds targets out of these node kinds, so Dereference/AddressOf are unreachable here.
  */
-private fun lhsExprToExpr(lhs: LhsExpression): Expression =
+internal fun lhsExprToExpr(lhs: LhsExpression): Expression =
 	when (lhs) {
 		is LhsExpression.Identifier -> Expression.Identifier(lhs.name)
 		is LhsExpression.Paren -> Expression.Paren(lhsExprToExpr(lhs.target))
@@ -67,7 +43,7 @@ private fun lhsExprToExpr(lhs: LhsExpression): Expression =
 	}
 
 /** The variable name at the root of an lvalue chain (through member/index/paren/deref), or null. */
-private fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
+internal fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
 	when (lhs) {
 		is LhsExpression.Identifier -> lhs.name
 		is LhsExpression.MemberLookup -> lhsBaseIdentifierName(lhs.receiver)
@@ -81,7 +57,7 @@ private fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
 /**
  * True if [statement] reads [name]. 
  */
-private fun statementReadsIdentifier(
+internal fun statementReadsIdentifier(
 	statement: Statement,
 	name: String,
 ): Boolean {
@@ -96,18 +72,23 @@ private fun statementReadsIdentifier(
 	return false
 }
 
-private fun immediateRead(
+internal fun immediateRead(
 	statement: Statement,
+	varName: String
 ): Boolean {
-	when (statement) {
-		is (node is Expression.Identifier && node.name == name) return true
+	return when (statement) {
+		 is Statement.Variable -> statement.name == varName //TODO
 		// For compound assignment (self-referential) statements, the lhs is also considered a read
-		if (node is Statement.Assignment && node.assignmentOperator != AssignmentOperator.EQUAL) {
-			val lhsName = lhsBaseIdentifierName(node.lhsExpression)
-			if (lhsName == name) return true
-		}
+		 is Statement.Assignment -> {
+			 if (statement.assignmentOperator != AssignmentOperator.EQUAL) {
+				 val lhsName = lhsBaseIdentifierName(statement.lhsExpression)
+				 lhsName == varName
+			 } else {
+				 false
+			 }
+		 }
+		else -> false
 	}
-	return false
 }
 
 /**
@@ -115,10 +96,10 @@ private fun immediateRead(
  * Continue is deliberately excluded:
  * it only skips to the next loop iteration, and the write refreshes the variable before it's read again, so a decrement stranded by a Continue is never actually observed by a stale read.
  */
-private fun isDisqualifyingExit(statement: Statement): Boolean =
+internal fun isDisqualifyingExit(statement: Statement): Boolean =
 	statement is Statement.Break || statement is Statement.Return || statement is Statement.Discard
 
-private fun collectReadIndices(
+internal fun collectReadIndices(
 	statements: List<Statement>,
 	fromIndex: Int,
 	name: String,
@@ -147,19 +128,19 @@ private fun collectReadIndices(
 
 
 /** True if [expr] contains a genuine read of `name` (an Expression.Identifier) as opposed to an Lhs value (which could be a write). */
-private fun expressionReadsIdentifier(
+internal fun expressionReadsIdentifier(
 	expr: Expression,
 	name: String,
 ): Boolean = nodesPreOrder(expr).any { it is Expression.Identifier && it.name == name }
 
 
-private fun zeroIndex(): Expression = Expression.IntLiteral("0i")
+internal fun zeroIndex(): Expression = Expression.IntLiteral("0i")
 
 /**
  * Reads @group (isGroup = true) / @binding (isGroup = false) integer.
  * Returns null if the attribute is absent / not an integer literal.
  */
-private fun intAttribute(globalVar: GlobalDecl.Variable, isGroup: Boolean): Int? {
+internal fun intAttribute(globalVar: GlobalDecl.Variable, isGroup: Boolean): Int? {
 	for (attr in globalVar.attributes) {
 		val expr =
 			when {
