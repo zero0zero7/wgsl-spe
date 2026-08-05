@@ -172,6 +172,7 @@ private class AddDivergentInjections(
             return null
         }
         return when (type) {
+            // Reject Boolean and abstract types, since they can't be used as the target of an increment/decrement.
             Type.Bool, Type.AbstractInteger, Type.AbstractFloat -> null
             is Type.Scalar -> base to type
             is Type.Vector ->
@@ -197,23 +198,23 @@ private class AddDivergentInjections(
     }
 
 
-    /**
-     * For multi-threaded execution. v2
-     */
-    private fun createMultiOutputInstance(
-        outputBinding: String,
-        structName: String,
-    ): GlobalDecl.Variable = GlobalDecl.Variable(
-        attributes = listOf(
-            Attribute.Group(Expression.IntLiteral("0")),
-            Attribute.Binding(Expression.IntLiteral(outputBinding)),
-        ),
-        name = "multithread_output",
-        addressSpace = AddressSpace.STORAGE,
-        accessMode = AccessMode.READ_WRITE,
-        typeDecl = TypeDecl.NamedType(structName),
-        initializer = null,
-        )
+    // /**
+    //  * For multi-threaded execution. v2
+    //  */
+    // private fun createMultiOutputInstance(
+    //     outputBinding: String,
+    //     structName: String,
+    // ): GlobalDecl.Variable = GlobalDecl.Variable(
+    //     attributes = listOf(
+    //         Attribute.Group(Expression.IntLiteral("0")),
+    //         Attribute.Binding(Expression.IntLiteral(outputBinding)),
+    //     ),
+    //     name = "multithread_output",
+    //     addressSpace = AddressSpace.STORAGE,
+    //     accessMode = AccessMode.READ_WRITE,
+    //     typeDecl = TypeDecl.NamedType(structName),
+    //     initializer = null,
+    //     )
 
     /**
      * For v0 and v1.
@@ -324,14 +325,14 @@ private class AddDivergentInjections(
         val declIndex: Int?, // declaration index within the compound
     )
 
-    /** One `var` declaration: where it lives (scope + index) and the scalar lvalue/type v2 would target. */
-    private data class Declaration(
-        val name: String,
-        val target: LhsExpression,
-        val targetType: Type.Scalar,
-        val scope: Statement.Compound,
-        val index: Int,
-    )
+    // /** One `var` declaration: where it lives (scope + index) and the scalar lvalue/type v2 would target. */
+    // private data class Declaration(
+    //     val name: String,
+    //     val target: LhsExpression,
+    //     val targetType: Type.Scalar,
+    //     val scope: Statement.Compound,
+    //     val index: Int,
+    // )
 
     /** Bundles the outputs of a single-statement, scope-stopping walk: see [collectDirectScopeInfo]. */
     private class DirectScopeInfo {

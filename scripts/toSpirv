@@ -70,6 +70,6 @@ run() {
 }
 
 # tint first: -f spirv writes a .spv binary.
-[ "$do_tint" -eq 1 ] && run "tint" "$out_dir/tint.main.spv" "$TINT" -f spirv "$wgsl" -o "$out_dir/tint.spv"
+[ "$do_tint" -eq 1 ] && run "tint" "$out_dir/tint.spv" "$TINT" -f spirv "$wgsl" -o "$out_dir/tint.spv"
 # naga infers format from the output extension; .spv = binary SPIR-V.
 [ "$do_naga" -eq 1 ] && run "naga" "$out_dir/naga.spv" "$NAGA" "$wgsl" "$out_dir/naga.spv"
