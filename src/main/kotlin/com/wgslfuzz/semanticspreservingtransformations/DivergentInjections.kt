@@ -160,6 +160,16 @@ private class AddDivergentInjections(
         return null
     }
 
+    /** Finds (or synthesizes) the local_invocation_id expression for [function],
+     *  returning it alongside the (possibly extended) parameter list. */
+    private fun getLidExpr(functionDecl: GlobalDecl.Function): Pair<Expression, List<ParameterDecl>> {
+        val existing :Expression? = findExistingLID(functionDecl)
+        if (existing != null) { return existing to functionDecl.parameters }
+        // Create if not exist in original shader
+        val (newParameter, expr) = lidParameter(fuzzerSettings.getUniqueId())
+        return expr to (functionDecl.parameters + newParameter)
+    }
+
     /**
      * Walks [type] down to its first scalar leaf, extending [base] with the member/index lookups needed to name that leaf. 
      */
@@ -218,6 +228,7 @@ private class AddDivergentInjections(
 
     /**
      * For v0 and v1.
+     * Modifies on injected counter
      */
     private fun createDivergentCounterPair(lidExpr: Expression): List<Statement> {
         val id = fuzzerSettings.getUniqueId() // both conditions share a single id, so that both deleted together
@@ -362,20 +373,12 @@ private class AddDivergentInjections(
         }
         traverse(::collectDirectScopeInfo, node, info)
     }
-
-     /** Finds (or synthesizes) the local_invocation_id expression for [function],
-     *  returning it alongside the (possibly extended) parameter list. */
-    private fun resolveLidExpr(functionDecl: GlobalDecl.Function): Pair<Expression, List<ParameterDecl>> {
-        val existing :Expression? = findExistingLID(functionDecl)
-        if (existing != null) { return existing to functionDecl.parameters }
-        val (newParameter, expr) = lidParameter(fuzzerSettings.getUniqueId())
-        return expr to (functionDecl.parameters + newParameter)
-    }
+     
 
     /**
      * For v2
      * Walks [body], treating every Statement.Compound as a lexical scope
-     * Finds local `var` declarations that resolve to a scalar via firstScalarLeaf.
+     * Finds all local `var` declarations that resolve to a scalar via firstScalarLeaf, including those in nested scopes.
      * Returns a "linked list" of NestingInfo, by return the head ie. the statement.compound that represents the entrypoint function's body
      */
     private fun findLocalVariableCandidates(body: Statement.Compound):
@@ -386,22 +389,24 @@ private class AddDivergentInjections(
             currNest: NestingInfo
         ) {
             val statements = compound.statements
-
             for (index in statements.indices) {
                 val statement = statements[index]
                 val info = DirectScopeInfo()
-                // for each statement in the compound, collect all identifiers read in that statement's scope, and all nested compounds to recurse into
+                // For each statement in the compound, collect all *identifiers read* in that statement's scope, and all nested compounds to recurse into
                 collectDirectScopeInfo(statement, info)
-                // if this statement is a local variable declaration, and it resolves to a scalar, add it to the list of candidates
+                // Collect local variable declaration, and add it to the list of candidates if it resolves to a scalar
                 if (statement is Statement.Variable) {
                     val variableType =
+                        // variable type explicitly declared
                         statement.typeDecl
                             ?.toType(shaderJob.environment.globalScope, shaderJob.environment)
+                            // if not, infer from initializer
                             ?: statement.initializer
                                 ?.let { shaderJob.environment.typeOf(it).asStoreTypeIfReference() }
+                    // Extract numeric scalar leaf of variable using the type
                     variableType?.let { type ->
                         firstScalarLeaf(LhsExpression.Identifier(statement.name), type, 0)?.let { (target, targetType) ->
-                            declarations.add(
+                            declarations.add( // Add to list of declarations found in current compound
                                 LocalVariableTarget(
                                     declCompound = compound,
                                     target = target,
@@ -412,16 +417,20 @@ private class AddDivergentInjections(
                         }
                     }
                 }
-                // stop walking the compound when encountering an exit, code that follows might or might not run, non-deterministic
+                // Stop walking the compound when encountering an exit, code that follows might or might not run, non-deterministic
                 else if (isDisqualifyingExit(statement)) {
                     break
                 }
-
+                // 
                 if (info.nestedCompounds.isNotEmpty()) {
+                    println("NUM OF NESTED: ${info.nestedCompounds.size}")
                     for (comp in info.nestedCompounds) {
                         currNest.nested.add(NestingInfo(curr=comp, nested=mutableListOf<NestingInfo>()))
                         walk(comp, declarations, currNest)
                     }
+                }
+                else {
+                    println("never encounterd")
                 }
             }
         }
@@ -444,7 +453,9 @@ private class AddDivergentInjections(
     }
 
     /**
-     * For v0 and v1, selects a set of indices within each Compound where the increment/decrement pair should be injected. Random.
+     * For v0 and v1
+     * Given entry point's function body, traverse:
+     * If is Statement.Compound, randomly select a set of indices within each Compound where the increment/decrement pair should be injected. 
      */
     private fun selectInjectionPoints(
         node: AstNode,
@@ -488,66 +499,66 @@ private class AddDivergentInjections(
         }
 
 
-    fun applyV0_(): ShaderJob {
-        val newGlobalDecls =
-            shaderJob.tu.globalDecls.map { decl ->
-                // Only focus on compute functions -- Skip decl otherwise (simply returning it instead of using it)
-                if (decl !is GlobalDecl.Function || decl.attributes.none { it is Attribute.Compute }) {
-                    return@map decl
-                }
+    // fun applyV0_(): ShaderJob {
+    //     val newGlobalDecls =
+    //         shaderJob.tu.globalDecls.map { decl ->
+    //             // Only focus on compute functions -- Skip decl otherwise (simply returning it instead of using it)
+    //             if (decl !is GlobalDecl.Function || decl.attributes.none { it is Attribute.Compute }) {
+    //                 return@map decl
+    //             }
 
-                val injections: DivergentCounterInjections = mutableMapOf()
-                // Injections will store a mapping of each compound statement (decl.body) to a random set of indices for code injection
-                selectInjectionPoints(decl.body, injections)
+    //             val injections: DivergentCounterInjections = mutableMapOf()
+    //             // Injections will store a mapping of each compound statement (decl.body) to a random set of indices for code injection
+    //             selectInjectionPoints(decl.body, injections)
                 
-                // Return original decl if it has no injections within
-                if (injections.values.none { it.isNotEmpty() }) {
-                    assert(injections.isNotEmpty()) { "injections map should not be empty if any of its values are non-empty, unless this decl body has no statements in it" }
-                    return@map decl
-                }
+    //             // Return original decl if it has no injections within
+    //             if (injections.values.none { it.isNotEmpty() }) {
+    //                 assert(injections.isNotEmpty()) { "injections map should not be empty if any of its values are non-empty, unless this decl body has no statements in it" }
+    //                 return@map decl
+    //             }
 
-                var parameters = decl.parameters
-                val existing :Expression? = findExistingLID(decl)
-                lidExpr =
-                    if (existing != null) {
-                        existing
-                    } else {
-                        val (newParamDecl, paramExprIdentifier) = lidParameter(fuzzerSettings.getUniqueId())
-                        parameters = parameters + newParamDecl
-                        paramExprIdentifier // assigned to lidExpr
-                    }
+    //             var parameters = decl.parameters
+    //             val existing :Expression? = findExistingLID(decl)
+    //             lidExpr =
+    //                 if (existing != null) {
+    //                     existing
+    //                 } else {
+    //                     val (newParamDecl, paramExprIdentifier) = lidParameter(fuzzerSettings.getUniqueId())
+    //                     parameters = parameters + newParamDecl
+    //                     paramExprIdentifier // assigned to lidExpr
+    //                 }
 
-                counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}"
-                val counterWrite = createCounterOverwrite()
-                val injectedBody = decl.body.clone { injectDivergentInjections(lidExpr, it, injections, counterWrite) }
+    //             counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}"
+    //             val counterWrite = createCounterOverwrite()
+    //             val injectedBody = decl.body.clone { injectDivergentInjections(lidExpr, it, injections, counterWrite) }
 
-                val statements = mutableListOf<Statement>()
-                statements.add(counterInstance(993, "injected_counter"))
-                statements.addAll(injectedBody.statements)
-                if (counterWrite != null && injectedBody.statements.lastOrNull() !is Statement.Return) {
-                    statements.add(counterWrite.clone())
-                }
+    //             val statements = mutableListOf<Statement>()
+    //             statements.add(counterInstance(993, "injected_counter"))
+    //             statements.addAll(injectedBody.statements)
+    //             if (counterWrite != null && injectedBody.statements.lastOrNull() !is Statement.Return) {
+    //                 statements.add(counterWrite.clone())
+    //             }
 
-                GlobalDecl.Function(
-                    attributes = decl.attributes,
-                    name = decl.name,
-                    parameters = parameters,
-                    returnAttributes = decl.returnAttributes,
-                    returnType = decl.returnType,
-                    body = Statement.Compound(statements, injectedBody.metadata),
-                    metadata = decl.metadata,
-                )
-            }
+    //             GlobalDecl.Function(
+    //                 attributes = decl.attributes,
+    //                 name = decl.name,
+    //                 parameters = parameters,
+    //                 returnAttributes = decl.returnAttributes,
+    //                 returnType = decl.returnType,
+    //                 body = Statement.Compound(statements, injectedBody.metadata),
+    //                 metadata = decl.metadata,
+    //             )
+    //         }
 
-        return ShaderJob(
-            tu =TranslationUnit(
-                    shaderJob.tu.directives,
-                    newGlobalDecls,
-                    shaderJob.tu.metadata,
-                ),
-            pipelineState = shaderJob.pipelineState,
-        )
-    }
+    //     return ShaderJob(
+    //         tu =TranslationUnit(
+    //                 shaderJob.tu.directives,
+    //                 newGlobalDecls,
+    //                 shaderJob.tu.metadata,
+    //             ),
+    //         pipelineState = shaderJob.pipelineState,
+    //     )
+    // }
 
     /**
      * Last-assigned @binding used by any module-scope variable in @group([group]), or null if the group binds nothing. 
@@ -568,104 +579,105 @@ private class AddDivergentInjections(
     }
     
 
-    fun applyV1_(): ShaderJob {
-        val prevBinding = lastBindingForGroup(0) ?: -1
-        val inputBinding = (prevBinding + 1).toString()
-        val outputBinding = (prevBinding + 2).toString()
+    // fun applyV1_(): ShaderJob {
+    //     val prevBinding = lastBindingForGroup(0) ?: -1
+    //     val inputBinding = (prevBinding + 1).toString()
+    //     val outputBinding = (prevBinding + 2).toString()
 
-        val structDecl = dataStruct(fuzzerSettings.getUniqueId())
-        val inputInstance = threadToRunInputInstance(inputBinding, structDecl.name)
-        val outputInstance = scalarOutputInstance(outputBinding, structDecl.name, "counter_output")
+    //     val structDecl = dataStruct(fuzzerSettings.getUniqueId())
+    //     val inputInstance = threadToRunInputInstance(inputBinding, structDecl.name)
+    //     val outputInstance = scalarOutputInstance(outputBinding, structDecl.name, "counter_output")
 
-        val newGlobalDecls =
-            shaderJob.tu.globalDecls.map { decl ->
-                if (decl !is GlobalDecl.Function || decl.attributes.none { it is Attribute.Compute }) {
-                    return@map decl
-                }
-                val injections: DivergentCounterInjections = mutableMapOf()
-                selectInjectionPoints(decl.body, injections)
-                if (injections.values.none { it.isNotEmpty() }) {
-                    assert(injections.isNotEmpty()) { "injections map should not be empty if any of its values are non-empty, unless this decl body has no statements in it" }
-                    return@map decl
-                }
-                var parameters = decl.parameters
-                val existing :Expression? = findExistingLID(decl)
-                lidExpr =
-                    if (existing != null) {
-                        existing
-                    } else {
-                        val (newParameter, expr) = lidParameter(fuzzerSettings.getUniqueId())
-                        parameters = parameters + newParameter
-                        expr
-                    }
-                counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}"
+    //     val newGlobalDecls =
+    //         shaderJob.tu.globalDecls.map { decl ->
+    //             if (decl !is GlobalDecl.Function || decl.attributes.none { it is Attribute.Compute }) {
+    //                 return@map decl
+    //             }
+    //             val injections: DivergentCounterInjections = mutableMapOf()
+    //             selectInjectionPoints(decl.body, injections)
+    //             if (injections.values.none { it.isNotEmpty() }) {
+    //                 assert(injections.isNotEmpty()) { "injections map should not be empty if any of its values are non-empty, unless this decl body has no statements in it" }
+    //                 return@map decl
+    //             }
+    //             var parameters = decl.parameters
+    //             val existing :Expression? = findExistingLID(decl)
+    //             lidExpr =
+    //                 if (existing != null) {
+    //                     existing
+    //                 } else {
+    //                     val (newParameter, expr) = lidParameter(fuzzerSettings.getUniqueId())
+    //                     parameters = parameters + newParameter
+    //                     expr
+    //                 }
+    //             counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}"
                 
-                fun threadData(): Expression = Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER)
-                incrementValue = threadData()
-                decrementValue = Expression.Binary(
-                    operator = BinaryOperator.MODULO,
-                    lhs = threadData(),
-                    rhs = Expression.Binary(
-                        operator = BinaryOperator.MINUS,
-                        lhs = Expression.IntLiteral("2147483645i"),
-                        rhs = threadData(),
-                    ),
-                )
-                val counterWrite = createCounterWrite(outputBufferName=outputInstance.name)
-                val injectedBody = decl.body.clone { injectDivergentInjections(lidExpr,it, injections, counterWrite) }
+    //             fun threadData(): Expression = Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER)
+    //             incrementValue = threadData()
+    //             decrementValue = Expression.Binary(
+    //                 operator = BinaryOperator.MODULO,
+    //                 lhs = threadData(),
+    //                 rhs = Expression.Binary(
+    //                     operator = BinaryOperator.MINUS,
+    //                     lhs = Expression.IntLiteral("2147483645i"),
+    //                     rhs = threadData(),
+    //                 ),
+    //             )
+    //             val counterWrite = createCounterWrite(outputBufferName=outputInstance.name)
+    //             val injectedBody = decl.body.clone { injectDivergentInjections(lidExpr,it, injections, counterWrite) }
 
-                val statements = mutableListOf<Statement>()
-                statements.add(counterInstance(999, "injected_counter"))
-                statements.addAll(injectedBody.statements)
-                if (counterWrite != null && injectedBody.statements.lastOrNull() !is Statement.Return) {
-                    statements.add(counterWrite.clone())
-                }
+    //             val statements = mutableListOf<Statement>()
+    //             statements.add(counterInstance(999, "injected_counter"))
+    //             statements.addAll(injectedBody.statements)
+    //             if (counterWrite != null && injectedBody.statements.lastOrNull() !is Statement.Return) {
+    //                 statements.add(counterWrite.clone())
+    //             }
 
-                // if (i32(lid.x) != thread_to_run.data) { return; } -- only the selected thread runs.
-                statements.add(0,
-                    Statement.If(
-                        condition = singleThreadCondition(lidExpr.clone(),
-                            Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER),
-                            equals = false,
-                        ),
-                        thenBranch = Statement.Compound(statements=listOf(Statement.Return(null))),
-                    )
-                )
+    //             // if (i32(lid.x) != thread_to_run.data) { return; } -- only the selected thread runs.
+    //             statements.add(0,
+    //                 Statement.If(
+    //                     condition = singleThreadCondition(lidExpr.clone(),
+    //                         Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER),
+    //                         equals = false,
+    //                     ),
+    //                     thenBranch = Statement.Compound(statements=listOf(Statement.Return(null))),
+    //                 )
+    //             )
 
-                GlobalDecl.Function(
-                    attributes = decl.attributes,
-                    name = decl.name,
-                    parameters = parameters,
-                    returnAttributes = decl.returnAttributes,
-                    returnType = decl.returnType,
-                    body = Statement.Compound(statements, injectedBody.metadata),
-                    metadata = decl.metadata,
-                )
-            }
+    //             GlobalDecl.Function(
+    //                 attributes = decl.attributes,
+    //                 name = decl.name,
+    //                 parameters = parameters,
+    //                 returnAttributes = decl.returnAttributes,
+    //                 returnType = decl.returnType,
+    //                 body = Statement.Compound(statements, injectedBody.metadata),
+    //                 metadata = decl.metadata,
+    //             )
+    //         }
 
-        return ShaderJob(
-            tu =TranslationUnit(
-                    shaderJob.tu.directives,
-                    listOf(structDecl, inputInstance, outputInstance) + newGlobalDecls,
-                    shaderJob.tu.metadata,
-                ),
-            pipelineState = shaderJob.pipelineState,
-        )
-    }
+    //     return ShaderJob(
+    //         tu =TranslationUnit(
+    //                 shaderJob.tu.directives,
+    //                 listOf(structDecl, inputInstance, outputInstance) + newGlobalDecls,
+    //                 shaderJob.tu.metadata,
+    //             ),
+    //         pipelineState = shaderJob.pipelineState,
+    //     )
+    // }
 
-    /** Bundles what [injectLocalVariableCounters] needs to thread through the recursive clone. */
-    private data class V2InjectionContext(
-        val injectionsByCompound: Map<Statement.Compound, List<Pair<LocalVariableTarget, Int>>>,
-        val magnitude: Expression,
-        val outputBufferName: String,
-        val indexExpr: Expression,
-    )
+    // /** Bundles what [injectLocalVariableCounters] needs to thread through the recursive clone. */
+    // private data class V2InjectionContext(
+    //     val injectionsByCompound: Map<Statement.Compound, List<Pair<LocalVariableTarget, Int>>>,
+    //     val magnitude: Expression,
+    //     val outputBufferName: String,
+    //     val indexExpr: Expression,
+    // )
 
     /** Selects injection points for [body]; null means nothing was selected. */
     private fun computeInjectionsOrNull(body: Statement.Compound): DivergentCounterInjections? {
         val injections: DivergentCounterInjections = mutableMapOf()
         // Injections will store a mapping of each compound statement (decl.body) to a random set of indices for code injection
         selectInjectionPoints(body, injections)
+        // Return injections if any of its values isnt empty, else return null
         return injections.takeIf { map -> map.values.any { it.isNotEmpty() } }
     }
 
@@ -698,10 +710,14 @@ private class AddDivergentInjections(
             pipelineState = shaderJob.pipelineState,
         )
 
+    /**
+    * Inject counter, modify counter, overwrite first ele of original output with counter value
+    * Oracle should only compare the first ele of the output, due to non-determinism with other variables
+     */ 
     fun applyV0(): ShaderJob {
         val newGlobalDecls = mapComputeFunctions(shaderJob.tu.globalDecls) { decl ->
             val injections = computeInjectionsOrNull(decl.body) ?: return@mapComputeFunctions decl
-            val (lidExpr, parameters) = resolveLidExpr(decl)
+            val (lidExpr, parameters) = getLidExpr(decl)
             counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}"
             val counterWrite = createCounterOverwrite()
             val body = buildInjectedBody(decl.body, injections, lidExpr, counterWrite, counterInitialValue = 993)
@@ -710,6 +726,10 @@ private class AddDivergentInjections(
         return rebuildShaderJob(newGlobalDecls)
     }
 
+    /** 
+    * Inject counter, modify counter, output counter
+    * Only 1 thread actually runs -- determined by injected input
+    */ 
     fun applyV1(): ShaderJob {
         val (inputBinding, outputBinding) = nextTwoBindings()
         val structDecl = dataStruct(fuzzerSettings.getUniqueId())
@@ -719,7 +739,7 @@ private class AddDivergentInjections(
         val newGlobalDecls = mapComputeFunctions(shaderJob.tu.globalDecls) { decl ->
             val injections = computeInjectionsOrNull(decl.body) ?: return@mapComputeFunctions decl
 
-            val (lidExpr, parameters) = resolveLidExpr(decl)
+            val (lidExpr, parameters) = getLidExpr(decl)
             counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}"
 
             fun threadData() = Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER)
@@ -731,7 +751,7 @@ private class AddDivergentInjections(
             )
 
             val counterWrite = createCounterWrite(outputBufferName = outputInstance.name)
-            val body = buildInjectedBody(decl.body, injections, lidExpr, counterWrite, counterInitialValue = 999)
+            val body = buildInjectedBody(decl.body, injections, lidExpr, counterWrite, counterInitialValue = 999) // makes use of `incrementValue`, `decrementValue`
 
             val gatedBody = Statement.Compound(
                 listOf(
@@ -745,7 +765,6 @@ private class AddDivergentInjections(
 
             decl.withParametersAndBody(parameters, gatedBody)
         }
-
         return rebuildShaderJob(newGlobalDecls, listOf(structDecl, inputInstance, outputInstance))
     }
 
@@ -753,35 +772,36 @@ private class AddDivergentInjections(
         val (inputBinding, outputBinding) = nextTwoBindings()
         val inputStruct = dataStruct(fuzzerSettings.getUniqueId())
         val inputBuffer = threadToRunInputInstance(inputBinding, inputStruct.name)
-        // val outputStruct = multiOutputStruct(fuzzerSettings.getUniqueId(), 256)
-        // val outputBuffer = createMultiOutputInstance(outputBinding, outputStruct.name)
+        var requireGate = true
 
         fun recursiveInjectLocalVariableModifiers(
             lidExpr: Expression,
             compound: Statement.Compound,
             injections: Map<Statement.Compound, List<Pair<LocalVariableTarget, Int>>>,
             ancestorTargets: List<Pair<LocalVariableTarget, Int>> = emptyList(),
-            outermost: Boolean = false,
         ): Statement.Compound {
             val currentTargets = injections[compound] ?: emptyList()
             val qualifiedTargets = ancestorTargets + currentTargets
+            // Suitable targets = Targets in outer scope + Targets in current scope that appear before current statement
             fun targetsVisibleInside(statementIndex: Int): List<Pair<LocalVariableTarget, Int>> =
                 ancestorTargets + currentTargets.filter { (target, _) ->
                     target.declIndex != null && target.declIndex < statementIndex
                 }
+
             val newStatements = mutableListOf<Statement>()
-            if (outermost == true) {
+            if (requireGate) {
                 newStatements.add(0, 
                     Statement.If(
                         condition = singleThreadCondition(lidExpr.clone(), Expression.MemberLookup(Expression.Identifier(inputBuffer.name), "data"), false),
                         thenBranch = Statement.Compound(listOf(Statement.Return(null))),
                     )
                 )
+                requireGate = false
             }
 
-            // A candidate may be declared only in a nested scope. The entry-point body still
-            // needs its single-thread gate, and traversal must continue until that declaration
-            // becomes visible; there is no target that can safely be modified in this scope yet.
+            // ----- If current scope has no suitable declarations, traversal must continue although no target can safely be modified in this scope yet. -----
+            // Continue recursing into nested scope (which might have suitable targets)
+            // Return new cloned scope
             if (qualifiedTargets.isEmpty()) {
                 compound.statements.forEachIndexed { statementIndex, statement ->
                     newStatements.add(
@@ -802,6 +822,8 @@ private class AddDivergentInjections(
                 return Statement.Compound(newStatements, compound.metadata)
             }
 
+            // ----- Else, when there are suitable modification targets -----
+            // Pick a random target, pick 2 random indices, ensure that indices are after declIndex if target is declared in current scope
             val (target, id) = qualifiedTargets.random()
             var index1: Int = Random.nextInt(0, compound.statements.size + 1)
             var index2: Int = Random.nextInt(0, compound.statements.size + 1)
@@ -812,11 +834,13 @@ private class AddDivergentInjections(
                     index2 = Random.nextInt(target.declIndex + 1, compound.statements.size + 1)
                 }
             }
+
             val fixCondition = singleThreadCondition(lidExpr.clone(), Expression.MemberLookup(Expression.Identifier(inputBuffer.name), "data"), true)
             val unfixCondition = singleThreadCondition(lidExpr.clone(), Expression.MemberLookup(Expression.Identifier(inputBuffer.name), "data"), true)
             val unfixStatement = modificationStatement(unfixCondition, target.target, Expression.Binary(BinaryOperator.PLUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")), id)
             val fixStatement = modificationStatement(fixCondition, target.target, Expression.Binary(BinaryOperator.MINUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")), id)
             
+            // Inject new statements, but also cloning existing ones over
             for (i in 0..compound.statements.size) {
                 if (i == min(index1, index2)) { newStatements.add(fixStatement) }
                 if (i == max(index1, index2)) { newStatements.add(unfixStatement) }
@@ -840,8 +864,9 @@ private class AddDivergentInjections(
             return Statement.Compound(newStatements, compound.metadata)
         }
 
+        // For each global declaration, if it is a computer entry point, perform the transformation in the lambda
         val newGlobalDecls = mapComputeFunctions(shaderJob.tu.globalDecls) { decl ->
-            val (nestingInfo, candidates) = findLocalVariableCandidates(decl.body)
+            val (nestingInfo, candidates) = findLocalVariableCandidates(decl.body) // All scopes nesting layers, All suitable variables' type and declaration info
             if (candidates.isEmpty()) return@mapComputeFunctions decl
             val selected = selectLocalVariableTargets(candidates)
             // Map<CompoundStatement, List<Pair<Target, Id>>>
@@ -851,7 +876,7 @@ private class AddDivergentInjections(
                     .map { it to fuzzerSettings.getUniqueId() }
                     .groupBy({ (target, _) -> target.declCompound }, { it })
 
-            val (lidExpr, parameters) = resolveLidExpr(decl)
+            val (lidExpr, parameters) = getLidExpr(decl)
             
             // Recursively, starting from the outermost ie. the entrypoint function body
             val newBody =
@@ -865,7 +890,6 @@ private class AddDivergentInjections(
             decl.withParametersAndBody(parameters, newBody)
         }
         return rebuildShaderJob(newGlobalDecls, listOf(inputStruct, inputBuffer))
-        // return rebuildShaderJob(newGlobalDecls, listOf(inputStruct, outputStruct, inputBuffer, outputBuffer))
     }
     
     /**
