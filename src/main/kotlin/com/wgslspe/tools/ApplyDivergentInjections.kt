@@ -187,7 +187,7 @@ fun main(args: Array<String>) {
     File(outputFilePath).writeText(transformedText)
     println("Wrote $outputFilePath")
 
-    if (divergenceVersion == 1) {
+    if ((divergenceVersion ?: 2) >= 1) {
         writeAugmentedInputs(
             baseInputsPath = inputsFilePath!!,
             outInputsPath = augmentedInputsFilePath,

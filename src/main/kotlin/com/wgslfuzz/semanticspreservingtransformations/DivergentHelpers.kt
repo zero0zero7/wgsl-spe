@@ -153,3 +153,37 @@ internal fun intAttribute(globalVar: GlobalDecl.Variable, isGroup: Boolean): Int
 	}
 	return null
 }
+
+
+/** Maps every @compute entry point through [transform]; every other decl passes through unchanged. */
+internal inline fun mapComputeFunctions(
+	globalDecls: List<GlobalDecl>,
+	transform: (GlobalDecl.Function) -> GlobalDecl,
+): List<GlobalDecl> =
+	globalDecls.map { decl ->
+		if (decl is GlobalDecl.Function && decl.attributes.any { it is Attribute.Compute }) {
+			transform(decl)
+		} else {
+			decl
+		}
+	}
+
+/** Rebuilds [this] with a new parameter list and body; everything else is untouched. */
+internal fun GlobalDecl.Function.withParametersAndBody(
+	parameters: List<ParameterDecl>,
+	body: Statement.Compound,
+): GlobalDecl.Function =
+	GlobalDecl.Function(
+		attributes = attributes,
+		name = name,
+		parameters = parameters,
+		returnAttributes = returnAttributes,
+		returnType = returnType,
+		body = body,
+		metadata = metadata,
+	)
+
+
+
+
+

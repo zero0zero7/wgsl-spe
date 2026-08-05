@@ -171,13 +171,48 @@ internal fun modificationStatement(
 			Statement.Compound(
 				listOf(
 					Statement.Assignment(
-						lhsExpression = LhsExpression.Identifier(targetName),
+						lhsExpression = lhs,
 						assignmentOperator = AssignmentOperator.EQUAL,
 						rhs = newValue,
 					),
 				),
 			),
 	)
+
+/**
+ * `if (<indexExpr> < V2_OUTPUT_ARRAY_SIZEu) { <outputBufferName>.data[<indexExpr>] = i32(<target>); }`
+ * Bounds-checked so a workgroup with more threads than [V2_OUTPUT_ARRAY_SIZE] just skips the write for its excess threads.
+ * For V2
+ */
+internal fun indexedOutputWrite(
+	outputBufferName: String,
+	indexExpr: Expression,
+	target: LhsExpression,
+): Statement =
+	Statement.If(
+		condition =
+			Expression.Binary(
+				operator = BinaryOperator.LESS_THAN,
+				lhs = indexExpr.clone(),
+				rhs = Expression.IntLiteral("256u"), //${V2_OUTPUT_ARRAY_SIZE}
+			),
+		thenBranch =
+			Statement.Compound(
+				listOf(
+					Statement.Assignment(
+						lhsExpression =
+							LhsExpression.IndexLookup(
+								LhsExpression.MemberLookup(LhsExpression.Identifier(outputBufferName), 
+								"data"), //V2_STRUCT_MEMBER)
+								indexExpr.clone(),
+							),
+						assignmentOperator = AssignmentOperator.EQUAL,
+						rhs = Expression.I32ValueConstructor(listOf(lhsExprToExpr(target))),
+					),
+				),
+			),
+	)
+	
 
 
 
