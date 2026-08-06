@@ -9,6 +9,7 @@ import com.wgslfuzz.core.Expression
 import com.wgslfuzz.core.GlobalDecl
 import com.wgslfuzz.core.ShaderJob
 import com.wgslfuzz.core.createShaderJob
+import com.wgslfuzz.semanticspreservingtransformations.DEFAULT_FUZZER_SEED
 import com.wgslfuzz.semanticspreservingtransformations.DefaultFuzzerSettings
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV0
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV1
@@ -47,7 +48,7 @@ fun main(args: Array<String>) {
 
     val seed by parser
         .option(ArgType.Int, fullName = "seed", description = "PRNG seed controlling which candidate sites get a counter pair")
-        .default(0)
+        .default(DEFAULT_FUZZER_SEED.toInt())
 
     val injectDivergence by parser
         .option(ArgType.Boolean, fullName = "injectDivergence", description = "Apply addDivergentInjections")

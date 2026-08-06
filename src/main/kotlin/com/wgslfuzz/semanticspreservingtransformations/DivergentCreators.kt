@@ -115,12 +115,12 @@ internal fun scalarOutputInstance(
 
 
 /**
- * `var <counter>: i32 = 999i;`
+ * `var <counter>: i32 = 993i;`
  * To be placed first in the entry point body.
- * 999 rather than 0 so that the expected end state is a distinctive constant.
+ * Non-zero so that the expected end state is a distinctive constant; see [COUNTER_INITIAL_VALUE].
  */
 internal fun counterInstance(
-	value :Int =999,
+	value :Int =COUNTER_INITIAL_VALUE,
 	counterName :String): Statement =
 	Statement.Variable(
 		name = counterName,

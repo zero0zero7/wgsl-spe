@@ -33,6 +33,16 @@ interface FuzzerSettings {
     // Yields a random integer in the range [0, limit)
     fun randomInt(limit: Int): Int
 
+    // Yields a random integer in the range [from, until). Routed through randomInt so that
+    // implementations only ever have to supply one source of randomness.
+    fun randomInt(
+        from: Int,
+        until: Int,
+    ): Int {
+        require(until > from) { "Empty range [$from, $until)" }
+        return from + randomInt(until - from)
+    }
+
     // Yield a random double in the range [0, 1]
     fun randomDouble(): Double
 
@@ -208,8 +218,12 @@ interface FuzzerSettings {
     fun injectDivergentCounter(): Boolean = randomInt(100) < 50
 }
 
+// Seed used when a caller does not supply its own generator, so that an unseeded
+// DefaultFuzzerSettings is still reproducible rather than varying run to run.
+const val DEFAULT_FUZZER_SEED: Long = 42
+
 class DefaultFuzzerSettings(
-    private val generator: Random,
+    private val generator: Random = Random(DEFAULT_FUZZER_SEED),
 ) : FuzzerSettings {
     private var nextId: Int = 0
 
