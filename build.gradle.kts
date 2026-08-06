@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import org.gradle.jvm.application.tasks.CreateStartScripts
+
 val antlrVersion: String = "4.10"
 val jacksonVersion: String = "2.19.0"
 val ktorVersion: String = "3.1.3"
@@ -172,4 +174,37 @@ tasks.register<JavaExec>("executePipeline") {
     javaLauncher.set(javaToolchains.launcherFor {
         languageVersion.set(JavaLanguageVersion.of(21))
     })
+}
+
+
+// To avoid OutOfMemoryError: Metaspace, Build applyDivergentInjections and printSkeletalPrograms loop tools once into standalone launcher scripts instead
+// (see fuzz/lib/common.sh: APPLY_DIVERGENT_INJECTIONS_BIN / PRINT_SKELETAL_PROGRAMS_BIN), so per-seed invocations are a bare
+// `java -cp <jars> <mainClass> "$@"` with no Gradle involved.
+val toolsInstallDir = layout.buildDirectory.dir("install/tools")
+
+// Sync (not Copy): prunes stale jars left behind by dependency-version bumps above, since CreateStartScripts bakes an explicit, versioned jar filename list into the generated script.
+val gatherToolLibs by tasks.registering(Sync::class) {
+    from(configurations.runtimeClasspath)
+    from(tasks.named("jar"))
+    into(toolsInstallDir.map { it.dir("lib") })
+}
+
+fun registerToolLauncher(taskName: String, mainClassKt: String) =
+    tasks.register<CreateStartScripts>("${taskName}Launcher") {
+        dependsOn(gatherToolLibs)
+        applicationName = taskName
+        mainClass.set(mainClassKt)
+        outputDir = toolsInstallDir.get().dir("bin").asFile
+        classpath = files(configurations.runtimeClasspath, tasks.named("jar"))
+    }
+
+registerToolLauncher("applyDivergentInjections", "com.wgslspe.tools.ApplyDivergentInjectionsKt")
+registerToolLauncher("printSkeletalPrograms", "com.wgslspe.tools.PrintSkeletalProgramsKt")
+
+tasks.register("installTools") {
+    group = "fuzzing"
+    description = "Builds standalone launcher scripts for hot-loop fuzzing tools under build/install/tools. " +
+        "Rerun after editing their Kotlin sources, changing a dependency version, OR after `./gradlew clean` " +
+        "(which wipes build/ entirely, launchers included)."
+    dependsOn("applyDivergentInjectionsLauncher", "printSkeletalProgramsLauncher")
 }

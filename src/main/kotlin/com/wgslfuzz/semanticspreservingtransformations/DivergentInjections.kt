@@ -464,7 +464,8 @@ private class AddDivergentInjections(
         traverse(::selectInjectionPoints, node, injections)
         if (node is Statement.Compound) {
             val range = 0..node.statements.size
-            val filtered = range.filter { fuzzerSettings.injectDivergentCounter() }
+            val filtered = range.filter { fuzzerSettings.randomInt(100) < 30 } 
+            // Fall back to a single random index if all were filtered out, so that at least one injection occurs in this compound
             injections[node] = filtered.ifEmpty { listOf(range.random()) }.toSet()
         }
     }
@@ -884,7 +885,6 @@ private class AddDivergentInjections(
                     lidExpr,
                     decl.body,
                     injectionsByCompound,
-                    outermost = true,
                 )
 
             decl.withParametersAndBody(parameters, newBody)
