@@ -126,13 +126,11 @@ internal fun firstScalarLeaf(
         Type.Bool, Type.AbstractInteger, Type.AbstractFloat -> null
         is Type.Scalar -> base to type
         is Type.Vector ->
-            if (type.elementType == Type.Bool || type.elementType.isAbstract()) {
-                null
-            } else {
-                LhsExpression.IndexLookup(base, zeroIndex()) to type.elementType
-            }
+            if (type.elementType == Type.Bool || type.elementType.isAbstract()) { null } 
+            else { LhsExpression.IndexLookup(base, zeroIndex()) to type.elementType }
         is Type.Matrix ->
-            LhsExpression.IndexLookup(LhsExpression.IndexLookup(base, zeroIndex()), zeroIndex()) to type.elementType
+            if (type.elementType.isAbstract()) { null } 
+            else { LhsExpression.IndexLookup(LhsExpression.IndexLookup(base, zeroIndex()), zeroIndex()) to type.elementType }
         is Type.Array ->
             type.elementCount?.let {
                 firstScalarLeaf(LhsExpression.IndexLookup(base, zeroIndex()), type.elementType, depth + 1)
@@ -161,14 +159,15 @@ internal data class LocalVariableTarget(
 
 /** Bundles the outputs of a single-statement, scope-stopping walk: see [collectDirectScopeInfo]. */
 internal class DirectScopeInfo {
-    val readNames = mutableSetOf<String>()
+    // TODO: unused -- needed by the placement predicate (no read of the target between the pair)
+    // val readNames = mutableSetOf<String>()
     val nestedCompounds = mutableListOf<Statement.Compound>()
 }
 
 /**
- * Collects, from [node] downward, every identifier read "in the current scope" -- ie. without
- * crossing into a nested Statement.Compound. Collects every Compound reachable, so the caller
- * knows which nested scopes to recurse into next.
+ * TODO
+ * Collects every Compound reachable from [node] without crossing into a nested Statement.Compound,
+ * so the caller knows which nested scopes to recurse into next.
  */
 internal fun collectDirectScopeInfo(
     node: AstNode,
@@ -179,6 +178,7 @@ internal fun collectDirectScopeInfo(
             info.nestedCompounds.add(node)
             return
         }
+        // TODO: identifier collection for DirectScopeInfo.readNames, see above
         is Expression.Identifier -> info.readNames.add(node.name)
         is Statement.Assignment ->
             if (node.assignmentOperator != AssignmentOperator.EQUAL) {
