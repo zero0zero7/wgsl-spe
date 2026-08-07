@@ -10,7 +10,9 @@ import com.wgslfuzz.core.GlobalDecl
 import com.wgslfuzz.core.ShaderJob
 import com.wgslfuzz.core.createShaderJob
 import com.wgslfuzz.semanticspreservingtransformations.DEFAULT_FUZZER_SEED
+import com.wgslfuzz.semanticspreservingtransformations.DEFAULT_THREAD_TO_RUN
 import com.wgslfuzz.semanticspreservingtransformations.DefaultFuzzerSettings
+import com.wgslfuzz.semanticspreservingtransformations.FuzzerSettings
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV0
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV1
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV2
@@ -90,9 +92,11 @@ fun main(args: Array<String>) {
         .option(
             ArgType.Int,
             fullName = "threadToRun",
-            description = "local_invocation_id.x value the v1 single-thread guard admits, written into the " +
-                "injected input buffer. Must match the constant the v1 transformation compares against.",
-        ).default(60)
+            description = "local_invocation_id.x value the v1/v2 single-thread gate admits, written into " +
+                "the injected input buffer. Also the value DivergentConditions' DivisorPair template " +
+                "derives its divisors from, so it is passed to the transformation as well as to the " +
+                "inputs file -- the two cannot drift apart.",
+        ).default(DEFAULT_THREAD_TO_RUN)
 
     val parseTimeout by parser
         .option(
@@ -160,7 +164,8 @@ fun main(args: Array<String>) {
         }
 
     val shaderJob = createShaderJob(shaderText, uniformBuffers, timeoutMilliseconds = parseTimeout)
-    val fuzzerSettings = DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom())
+    val fuzzerSettings: FuzzerSettings =
+        ThreadToRunSettings(DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom()), threadToRun)
     val transformedShaderJob =
         when (divergenceVersion) {
             0 -> addDivergentInjectionsV0(shaderJob, fuzzerSettings)
@@ -264,3 +269,12 @@ private fun intToLittleEndianBytes(value: Int): List<Int> =
         (value ushr 16) and 0xFF,
         (value ushr 24) and 0xFF,
     )
+
+// Class delegation:
+// - Overrides only the [threadToRun] member of `FuzzerSettings` [delegate], delegating everything else
+private class ThreadToRunSettings(
+    private val delegate: FuzzerSettings,
+    private val threadToRun: Int,
+) : FuzzerSettings by delegate {
+    override fun threadToRun(): Int = threadToRun
+}

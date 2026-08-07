@@ -97,6 +97,8 @@ interface FuzzerSettings {
         val threshold: Int = 1,
         // Dropped when the entry point has no runtime-opaque selector to compare against (v0).
         val selectorEquality: Int = 2,
+        // Same, and additionally needs threadToRun() to have two divisors above 1.
+        val divisorPair: Int = 8,
     )
 
     val divergentConditionWeights: DivergentConditionWeights
@@ -229,11 +231,22 @@ interface FuzzerSettings {
     fun controlFlowWrap(): Boolean = randomInt(100) < 50
 
     fun injectDivergentCounter(): Boolean = randomInt(100) < 50
+
+    /**
+     * The local_invocation_id.x value that v1/v2's single-thread gate admits.
+     *
+     * The injected input buffer is populated with this same value by the tooling, so the two MUST
+     * agree -- see ApplyDivergentInjections' --threadToRun. 
+     */
+    fun threadToRun(): Int = DEFAULT_THREAD_TO_RUN
 }
 
 // Seed used when a caller does not supply its own generator, so that an unseeded
 // DefaultFuzzerSettings is still reproducible rather than varying run to run.
 const val DEFAULT_FUZZER_SEED: Long = 42
+
+// Default thread admitted by v1/v2's single-thread gate -- 60 
+const val DEFAULT_THREAD_TO_RUN: Int = 60
 
 class DefaultFuzzerSettings(
     private val generator: Random = Random(DEFAULT_FUZZER_SEED),

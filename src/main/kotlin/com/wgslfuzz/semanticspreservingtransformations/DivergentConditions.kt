@@ -142,6 +142,63 @@ private object SelectorEquality : DivergentConditionTemplate {
 }
 
 /**
+ * Every divisor of [value] that is greater than 1, ascending.
+ *
+ * 1 is excluded deliberately: `x % 1u == 0u` holds for every invocation, so a compiler folds it to
+ * `true` and the guard stops guarding anything.
+ */
+internal fun divisorsAboveOne(value: Int): List<Int> {
+    if (value < 2) return emptyList()
+    val divisors = sortedSetOf<Int>()
+    var d = 2
+    while (d * d <= value) {
+        if (value % d == 0) {
+            divisors.add(d)
+            val co = value / d
+            if (co > 1) divisors.add(co)
+        }
+        d++
+    }
+    divisors.add(value) // value >= 2 always divides itself
+    return divisors.toList()
+}
+
+/**
+ * Two DISTINCT divisors of [value], both greater than 1, or null when [value] has fewer than two
+ * such divisors.
+ */
+internal fun twoDistinctDivisors(
+    value: Int,
+    fuzzerSettings: FuzzerSettings,
+): Pair<Int, Int>? {
+    val divisors = divisorsAboveOne(value)
+    if (divisors.size < 2) return null
+    val first = fuzzerSettings.randomElement(divisors)
+    val second = fuzzerSettings.randomElement(divisors.filter { it != first })
+    return first to second
+}
+
+/**
+ * `t % D1u == 0u` / `t % D2u == 0u`, where D1 and D2 are DISTINCT divisors of the thread the
+ * single-thread gate admits.
+ *
+ * Harder to fold than the negation-based templates above: the two spellings share no constant and
+ * neither is a syntactic transform of the other.
+ */
+private class DivisorPair(
+    private val perturbDivisor: Int,
+    private val restoreDivisor: Int,
+) : DivergentConditionTemplate {
+    override fun perturbGuard(context: EntryPointContext): Expression =
+        binary(BinaryOperator.EQUAL_EQUAL, binary(BinaryOperator.MODULO, lidX(context), u(perturbDivisor)), u(0))
+
+    override fun restoreGuard(context: EntryPointContext): Expression =
+        binary(BinaryOperator.EQUAL_EQUAL, binary(BinaryOperator.MODULO, lidX(context), u(restoreDivisor)), u(0))
+
+    override val commentary: String = "lid.x % $perturbDivisor == 0 / lid.x % $restoreDivisor == 0"
+}
+
+/**
  * Picks a condition template. Never null: [NegatedModulus] applies unconditionally.
  */
 internal fun chooseConditionTemplate(
@@ -165,6 +222,16 @@ internal fun chooseConditionTemplate(
             weights.threshold to { Threshold(fuzzerSettings.randomInt(1, 65)) },
             // v0 injects no input buffer, so it has no runtime-opaque selector to compare against.
             if (context.opaque() != null) weights.selectorEquality to { SelectorEquality } else null,
+            if (context.opaque() != null && divisorsAboveOne(fuzzerSettings.threadToRun()).size >= 2) {
+                weights.divisorPair to
+                    {
+                        val (perturbDivisor, restoreDivisor) =
+                            twoDistinctDivisors(fuzzerSettings.threadToRun(), fuzzerSettings)!!
+                        DivisorPair(perturbDivisor, restoreDivisor)
+                    }
+            } else {
+                null
+            },
         ).filter { it.first > 0 }
     return choose(fuzzerSettings, choices)
 }
