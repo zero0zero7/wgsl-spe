@@ -35,9 +35,10 @@ private fun createDivergentCounterPair(
     decrementValue: Expression,
 ): List<Statement> {
     val id = fuzzerSettings.getUniqueId() // both conditions share a single id, so that both deleted together
+    val guards = chooseConditionTemplate(fuzzerSettings, context)
     val incrementIf =
         Statement.If(
-            condition = modNCondition(context.lid(), n = 2),
+            condition = guards.perturbGuard(context),
             thenBranch =
                 Statement.Compound(
                     listOf(
@@ -48,11 +49,11 @@ private fun createDivergentCounterPair(
                         ),
                     ),
                 ),
-            metadata = setOf(AugmentedMetadata.DeletableStatement(id, "divergent counter increment")),
+            metadata = setOf(AugmentedMetadata.DeletableStatement(id, "divergent perturbation: ${guards.commentary}")),
         )
     val decrementIf =
         Statement.If(
-            condition = modNCondition(context.lid(), n = 3),
+            condition = guards.restoreGuard(context),
             thenBranch =
                 Statement.Compound(
                     listOf(
@@ -63,7 +64,7 @@ private fun createDivergentCounterPair(
                         ),
                     ),
                 ),
-            metadata = setOf(AugmentedMetadata.DeletableStatement(id, "divergent counter decrement")),
+            metadata = setOf(AugmentedMetadata.DeletableStatement(id, "divergent restore")),
         )
     return listOf(incrementIf, decrementIf)
 }

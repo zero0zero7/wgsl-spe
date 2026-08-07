@@ -91,19 +91,21 @@ internal fun applyV2(
         val index1: Int = fuzzerSettings.randomInt(lowestIndex, compound.statements.size + 1)
         val index2: Int = fuzzerSettings.randomInt(lowestIndex, compound.statements.size + 1)
 
-        // Both statements carry the SAME id, so the reducer deletes them together or not at all.
+        // Both statements carry the SAME id, so the reducer deletes them together or not at all,
+        // and ONE condition template supplies both guards, so they cannot disagree.
+        val guards = chooseConditionTemplate(fuzzerSettings, context)
         val perturbStatement =
             perturbationStatement(
-                guard = singleThreadCondition(context.lid(), context.opaque()!!, equals = true),
+                guard = guards.perturbGuard(context),
                 target = target.target,
                 newValue =
                     Expression.Binary(BinaryOperator.PLUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),
                 id = id,
-                commentary = "divergent perturbation",
+                commentary = "divergent perturbation: ${guards.commentary}",
             )
         val restoreStatement =
             perturbationStatement(
-                guard = singleThreadCondition(context.lid(), context.opaque()!!, equals = true),
+                guard = guards.restoreGuard(context),
                 target = target.target,
                 newValue =
                     Expression.Binary(BinaryOperator.MINUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),

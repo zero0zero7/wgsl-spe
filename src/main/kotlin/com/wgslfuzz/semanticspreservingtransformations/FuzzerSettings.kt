@@ -89,6 +89,19 @@ interface FuzzerSettings {
     val scalarIdentityOperationWeights: ScalarIdentityOperationWeights
         get() = ScalarIdentityOperationWeights()
 
+    // Which guard shape wraps an injected perturb/restore pair. See DivergentConditions.kt.
+    data class DivergentConditionWeights(
+        val negatedModulus: Int = 2,
+        val moduloVersusMask: Int = 3,
+        val bitTest: Int = 3,
+        val threshold: Int = 1,
+        // Dropped when the entry point has no runtime-opaque selector to compare against (v0).
+        val selectorEquality: Int = 2,
+    )
+
+    val divergentConditionWeights: DivergentConditionWeights
+        get() = DivergentConditionWeights()
+
     data class DeadBreaksAndContinuesWeights(
         val ifFalse: Int = 1,
         val ifTrue: Int = 1,

@@ -2,36 +2,172 @@ package com.wgslfuzz.semanticspreservingtransformations
 
 import com.wgslfuzz.core.BinaryOperator
 import com.wgslfuzz.core.Expression
+import com.wgslfuzz.core.UnaryOperator
 import com.wgslfuzz.core.clone
 
 // Boolean guards wrapped around injected perturbation statements.
-// Conditions are meant to create divergence across invocations, to trigger different compiler optimisations and arrangements.
 //
 // A perturb/restore pair is only semantics preserving if BOTH guards evaluate the same way for
-// every invocation. The catalogue in this file will make that true by construction: one template
-// instance yields both spellings, so two mismatched predicates become unrepresentable rather than
-// merely discouraged. (The v0/v1 %2-vs-%3 bug is exactly that mistake.)
+// every invocation. That is enforced here by construction: ONE template instance yields both
+// spellings.
+
+/** `<lid>.x`, a u32. The shared free variable of every template below. */
+private fun lidX(context: EntryPointContext): Expression = Expression.MemberLookup(context.lid(), "x")
+
+private fun u(value: Int): Expression = Expression.IntLiteral("${value}u")
+
+private fun not(expr: Expression): Expression =
+    Expression.Unary(UnaryOperator.LOGICAL_NOT, Expression.Paren(expr))
+
+private fun binary(
+    op: BinaryOperator,
+    lhs: Expression,
+    rhs: Expression,
+): Expression = Expression.Binary(op, lhs, rhs)
 
 /**
- * `local_invocation_id.x % Nu == 0u`.
+ * One template yielding TWO spellings of a single predicate.
  *
- * u32 (not i32) since local_invocation_id is vec3<u32>, so `.x` is u32, and WGSL's `%` requires
- * both operands to share that type.
+ * Contract:
+ *  1. Both guards evaluate identically for every invocation -- by construction, from parameters
+ *     drawn once when the instance is created, not by a caller happening to pass matching arguments.
+ *  2. The two spellings are NOT textually identical, so a compiler cannot cancel the pair by
+ *     syntactic matching.
+ *  3. Neither guard reads the perturbed target, nor anything a perturbation writes: the restore
+ *     guard runs while the target is perturbed and must still agree with the perturb guard.
+ *  4. Total and side-effect free: no divide-by-zero, no shift >= 32.
  */
-internal fun modNCondition(
-    lidExpr: Expression,
-    n: Int = 2,
-): Expression.Binary =
-    Expression.Binary(
-        operator = BinaryOperator.EQUAL_EQUAL,
-        lhs =
-            Expression.Binary(
-                operator = BinaryOperator.MODULO,
-                lhs = Expression.MemberLookup(lidExpr.clone(), "x"),
-                rhs = Expression.IntLiteral("${n}u"),
+internal interface DivergentConditionTemplate {
+    fun perturbGuard(context: EntryPointContext): Expression
+
+    fun restoreGuard(context: EntryPointContext): Expression
+
+    val commentary: String
+}
+
+/**
+ * `t % Nu == Ru` / `!(t % Nu != Ru)`.
+ * The divisor is at least 2, so that the guard is not trivially uniform (always true) for all invocations.
+ */
+private class NegatedModulus(
+    private val n: Int,
+    private val r: Int,
+) : DivergentConditionTemplate {
+    override fun perturbGuard(context: EntryPointContext): Expression =
+        binary(BinaryOperator.EQUAL_EQUAL, binary(BinaryOperator.MODULO, lidX(context), u(n)), u(r))
+
+    override fun restoreGuard(context: EntryPointContext): Expression =
+        not(binary(BinaryOperator.NOT_EQUAL, binary(BinaryOperator.MODULO, lidX(context), u(n)), u(r)))
+
+    override val commentary: String = "lid.x % $n == $r"
+}
+
+/**
+ * `t % Nu == Ru` / `(t & (N-1)u) == Ru`, with N a power of two.
+ * For unsigned t and N = 2^k, `t % N` is the low k bits of t, which is exactly `t & (N-1)`.
+ */
+private class ModuloVersusMask(
+    private val n: Int,
+    private val r: Int,
+) : DivergentConditionTemplate {
+    override fun perturbGuard(context: EntryPointContext): Expression =
+        binary(BinaryOperator.EQUAL_EQUAL, binary(BinaryOperator.MODULO, lidX(context), u(n)), u(r))
+
+    override fun restoreGuard(context: EntryPointContext): Expression =
+        binary(
+            BinaryOperator.EQUAL_EQUAL,
+            Expression.Paren(binary(BinaryOperator.BINARY_AND, lidX(context), Expression.Paren(u(n - 1)))),
+            u(r),
+        )
+
+    override val commentary: String = "lid.x % $n == $r (mask form on restore)"
+}
+
+/**
+ * `((t >> Bu) & 1u) == 1u` / `(t & (1u << Bu)) != 0u`.
+ * Both test bit B of t. Shift amounts are below 32, so both shifts are fully defined.
+ */
+private class BitTest(
+    private val bit: Int,
+) : DivergentConditionTemplate {
+    override fun perturbGuard(context: EntryPointContext): Expression =
+        binary(
+            BinaryOperator.EQUAL_EQUAL,
+            Expression.Paren(
+                binary(BinaryOperator.BINARY_AND, Expression.Paren(binary(BinaryOperator.SHIFT_RIGHT, lidX(context), u(bit))), u(1)),
             ),
-        rhs = Expression.IntLiteral("0u"),
-    )
+            u(1),
+        )
+
+    override fun restoreGuard(context: EntryPointContext): Expression =
+        binary(
+            BinaryOperator.NOT_EQUAL,
+            Expression.Paren(
+                binary(BinaryOperator.BINARY_AND, lidX(context), Expression.Paren(binary(BinaryOperator.SHIFT_LEFT, u(1), u(bit)))),
+            ),
+            u(0),
+        )
+
+    override val commentary: String = "bit $bit of lid.x set"
+}
+
+/**
+ * `t < Ku` / `!(Ku <= t)`.
+ */
+private class Threshold(
+    private val k: Int,
+) : DivergentConditionTemplate {
+    override fun perturbGuard(context: EntryPointContext): Expression =
+        binary(BinaryOperator.LESS_THAN, lidX(context), u(k))
+
+    override fun restoreGuard(context: EntryPointContext): Expression =
+        not(binary(BinaryOperator.LESS_THAN_EQUAL, u(k), lidX(context)))
+
+    override val commentary: String = "lid.x < $k"
+}
+
+/**
+ * `t == <sel>` / `!(<sel> != t)`, where `<sel>` reads the injected `var<storage, read>` selector.
+ * No shader code can write that buffer, so both loads yield the same value within an invocation.
+ * Only available when the entry point has such a selector (v1/v2, not v0).
+ */
+private object SelectorEquality : DivergentConditionTemplate {
+    override fun perturbGuard(context: EntryPointContext): Expression =
+        binary(BinaryOperator.EQUAL_EQUAL, lidX(context), context.opaque()!!)
+
+    override fun restoreGuard(context: EntryPointContext): Expression =
+        not(binary(BinaryOperator.NOT_EQUAL, context.opaque()!!, lidX(context)))
+
+    override val commentary: String = "lid.x == thread selector"
+}
+
+/**
+ * Picks a condition template. Never null: [NegatedModulus] applies unconditionally.
+ */
+internal fun chooseConditionTemplate(
+    fuzzerSettings: FuzzerSettings,
+    context: EntryPointContext,
+): DivergentConditionTemplate {
+    val weights = fuzzerSettings.divergentConditionWeights
+    val choices: List<Pair<Int, () -> DivergentConditionTemplate>> =
+        listOfNotNull(
+            weights.negatedModulus to
+                {
+                    val n = fuzzerSettings.randomInt(2, 9)
+                    NegatedModulus(n, fuzzerSettings.randomInt(0, n)) // [0, n) is the valid range of remainders
+                },
+            weights.moduloVersusMask to
+                {
+                    val n = 1 shl fuzzerSettings.randomInt(1, 5) // 2, 4, 8 or 16
+                    ModuloVersusMask(n, fuzzerSettings.randomInt(0, n))
+                },
+            weights.bitTest to { BitTest(fuzzerSettings.randomInt(0, 8)) },
+            weights.threshold to { Threshold(fuzzerSettings.randomInt(1, 65)) },
+            // v0 injects no input buffer, so it has no runtime-opaque selector to compare against.
+            if (context.opaque() != null) weights.selectorEquality to { SelectorEquality } else null,
+        ).filter { it.first > 0 }
+    return choose(fuzzerSettings, choices)
+}
 
 /**
  * Selects a single thread to run, with all others taking an early return.
