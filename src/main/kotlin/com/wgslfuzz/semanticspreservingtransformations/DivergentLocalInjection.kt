@@ -37,17 +37,17 @@ internal fun applyV2(
     fun recursiveInjectTargetModifiers(
         context: EntryPointContext,
         compound: Statement.Compound,
-        injections: Map<Statement.Compound, List<Pair<LocalVariableTarget, Int>>>,
-        ancestorTargets: List<Pair<LocalVariableTarget, Int>> = emptyList(),
+        injections: Map<Statement.Compound, List<LocalVariableTarget>>,
+        ancestorTargets: List<LocalVariableTarget> = emptyList(),
     ): Statement.Compound {
         val currentTargets = injections[compound] ?: emptyList()
         val qualifiedTargets = ancestorTargets + currentTargets
 
         // Suitable targets = targets in an outer scope + targets in this scope declared before
         // the statement being descended into.
-        fun targetsVisible(statementIndex: Int): List<Pair<LocalVariableTarget, Int>> =
+        fun targetsVisible(statementIndex: Int): List<LocalVariableTarget> =
             ancestorTargets +
-                currentTargets.filter { (target, _) ->
+                currentTargets.filter { target ->
                     target.declIndex != null && target.declIndex < statementIndex
                 }
 
@@ -79,7 +79,8 @@ internal fun applyV2(
         // ----- There are suitable modification targets -----
         // Pick a random target and two random indices, keeping both after the declaration when
         // the target is declared in this scope.
-        val (target, id) = fuzzerSettings.randomElement(qualifiedTargets)
+        val target = fuzzerSettings.randomElement(qualifiedTargets)
+        val id = fuzzerSettings.getUniqueId()
         val lowestIndex =
             if (target.declCompound == compound) {
                 assert(target.declIndex != null)
@@ -90,27 +91,30 @@ internal fun applyV2(
         val index1: Int = fuzzerSettings.randomInt(lowestIndex, compound.statements.size + 1)
         val index2: Int = fuzzerSettings.randomInt(lowestIndex, compound.statements.size + 1)
 
-        val fixCondition = singleThreadCondition(context.lid(), context.opaque()!!, equals = true)
-        val unfixCondition = singleThreadCondition(context.lid(), context.opaque()!!, equals = true)
-        val unfixStatement =
-            modificationStatement(
-                unfixCondition,
-                target.target,
-                Expression.Binary(BinaryOperator.PLUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),
-                id,
+        // Both statements carry the SAME id, so the reducer deletes them together or not at all.
+        val perturbStatement =
+            perturbationStatement(
+                guard = singleThreadCondition(context.lid(), context.opaque()!!, equals = true),
+                target = target.target,
+                newValue =
+                    Expression.Binary(BinaryOperator.PLUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),
+                id = id,
+                commentary = "divergent perturbation",
             )
-        val fixStatement =
-            modificationStatement(
-                fixCondition,
-                target.target,
-                Expression.Binary(BinaryOperator.MINUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),
-                id,
+        val restoreStatement =
+            perturbationStatement(
+                guard = singleThreadCondition(context.lid(), context.opaque()!!, equals = true),
+                target = target.target,
+                newValue =
+                    Expression.Binary(BinaryOperator.MINUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),
+                id = id,
+                commentary = "divergent restore",
             )
 
         // Inject the new statements, cloning the existing ones over around them.
         for (i in 0..compound.statements.size) {
-            if (i == min(index1, index2)) newStatements.add(fixStatement)
-            if (i == max(index1, index2)) newStatements.add(unfixStatement)
+            if (i == min(index1, index2)) newStatements.add(perturbStatement)
+            if (i == max(index1, index2)) newStatements.add(restoreStatement)
             if (i < compound.statements.size) {
                 newStatements.add(
                     compound.statements[i].clone { node ->
@@ -137,10 +141,7 @@ internal fun applyV2(
             if (candidates.isEmpty()) return@mapComputeFunctions decl
             val selected = selectLocalVariableTargets(fuzzerSettings, candidates)
             // Group the selected targets by their declaring compound.
-            val injectionsByCompound =
-                selected
-                    .map { it to fuzzerSettings.getUniqueId() }
-                    .groupBy({ (target, _) -> target.declCompound }, { it })
+            val injectionsByCompound = selected.groupBy { target -> target.declCompound }
 
             val (lidExpr, parameters) = getLidExpr(shaderJob, fuzzerSettings, decl)
             val context =

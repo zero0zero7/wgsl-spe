@@ -5,7 +5,9 @@ import com.wgslfuzz.core.AddedIdentifier
 import com.wgslfuzz.core.AddressSpace
 import com.wgslfuzz.core.AssignmentOperator
 import com.wgslfuzz.core.Attribute
+import com.wgslfuzz.core.AugmentedMetadata
 import com.wgslfuzz.core.BuiltinValue
+import com.wgslfuzz.core.clone
 import com.wgslfuzz.core.Expression
 import com.wgslfuzz.core.GlobalDecl
 import com.wgslfuzz.core.LhsExpression
@@ -109,27 +111,31 @@ internal fun lidParameter(suffix: Int = -1): Pair<ParameterDecl, Expression> {
 }
 
 /**
- * `if (<condition>) { <lhs> = <newValue>; }`
+ * `if (<guard>) { <target> = <newValue>; }`
  *
- * TODO(step 5): attach AugmentedMetadata.DeletableStatement(id, ...) so v2's pairs become
- * reducible. [id] is currently accepted and discarded.
+ * Both halves of a perturb/restore pair must be built with the SAME [id]. The reducer collapses
+ * all nodes sharing an id into one opportunity (Reducer.kt `findOpportunities` calls `.distinct()`),
+ * so the pair is always deleted together -- never one without the other, which would leave the
+ * target permanently perturbed.
  */
-internal fun modificationStatement(
-    condition: Expression,
-    lhs: LhsExpression,
+internal fun perturbationStatement(
+    guard: Expression,
+    target: LhsExpression,
     newValue: Expression,
     id: Int,
+    commentary: String,
 ): Statement.If =
     Statement.If(
-        condition = condition,
+        condition = guard,
         thenBranch =
             Statement.Compound(
                 listOf(
                     Statement.Assignment(
-                        lhsExpression = lhs,
+                        lhsExpression = target.clone(),
                         assignmentOperator = AssignmentOperator.EQUAL,
                         rhs = newValue,
                     ),
                 ),
             ),
+        metadata = setOf(AugmentedMetadata.DeletableStatement(id, commentary)),
     )
