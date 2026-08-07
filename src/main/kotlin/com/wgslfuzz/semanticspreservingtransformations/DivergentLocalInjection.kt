@@ -61,12 +61,7 @@ internal fun applyV2(
                     // Clone the entire compound statement, but with a transformation that recurses into nested compounds and adds injections to them if previously computed.
                     statement.clone { node ->
                         if (node is Statement.Compound) {
-                            recursiveInjectTargetModifiers(
-                                context,
-                                node,
-                                injections,
-                                targetsVisible(statementIndex),
-                            )
+                            recursiveInjectTargetModifiers(context, node, injections, targetsVisible(statementIndex))
                         } else {
                             null
                         }
@@ -80,6 +75,23 @@ internal fun applyV2(
         // Pick a random target and two random indices, keeping both after the declaration when
         // the target is declared in this scope.
         val target = fuzzerSettings.randomElement(qualifiedTargets)
+        val perturbation = choosePerturbation(fuzzerSettings, target.targetType)
+        if (perturbation == null) {
+            // No template applies to this scalar type (floats, while they are deferred). 
+            // Recurse into nested scopes but inject nothing here.
+            compound.statements.forEachIndexed { statementIndex, statement ->
+                newStatements.add(
+                    statement.clone { node ->
+                        if (node is Statement.Compound) {
+                            recursiveInjectTargetModifiers(context, node, injections, targetsVisible(statementIndex))
+                        } else {
+                            null
+                        }
+                    },
+                )
+            }
+            return Statement.Compound(newStatements, compound.metadata)
+        }
         val id = fuzzerSettings.getUniqueId()
         val lowestIndex =
             if (target.declCompound == compound) {
@@ -98,17 +110,15 @@ internal fun applyV2(
             perturbationStatement(
                 guard = guards.perturbGuard(context),
                 target = target.target,
-                newValue =
-                    Expression.Binary(BinaryOperator.PLUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),
+                newValue = perturbation.perturb(target.target),
                 id = id,
-                commentary = "divergent perturbation: ${guards.commentary}",
+                commentary = "divergent perturbation: ${perturbation.commentary} under ${guards.commentary}",
             )
         val restoreStatement =
             perturbationStatement(
                 guard = guards.restoreGuard(context),
                 target = target.target,
-                newValue =
-                    Expression.Binary(BinaryOperator.MINUS, lhsExprToExpr(target.target), Expression.IntLiteral("10")),
+                newValue = perturbation.restore(target.target),
                 id = id,
                 commentary = "divergent restore",
             )

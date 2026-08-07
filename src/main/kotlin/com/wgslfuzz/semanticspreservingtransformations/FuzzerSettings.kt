@@ -104,6 +104,15 @@ interface FuzzerSettings {
     val divergentConditionWeights: DivergentConditionWeights
         get() = DivergentConditionWeights()
 
+    // How an injected pair modifies its target. See DivergentPerturbations.kt.
+    // One field for now; each deferred template (MulOdd, XorMask, BitwiseNot, RotateU32) adds one.
+    data class DivergentPerturbationWeights(
+        val addSub: Int = 1,
+    )
+
+    val divergentPerturbationWeights: DivergentPerturbationWeights
+        get() = DivergentPerturbationWeights()
+
     data class DeadBreaksAndContinuesWeights(
         val ifFalse: Int = 1,
         val ifTrue: Int = 1,

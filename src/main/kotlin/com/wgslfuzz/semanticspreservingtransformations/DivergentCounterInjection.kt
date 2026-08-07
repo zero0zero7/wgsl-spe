@@ -23,50 +23,35 @@ import com.wgslfuzz.core.traverse
 internal typealias DivergentCounterInjections = MutableMap<Statement.Compound, Set<Int>>
 
 /**
- * For v0 and v1: one perturb/restore pair applied to the synthesised counter.
+ * v0, v1.
+ * One perturb/restore pair applied to the synthesised counter.
  * Both statements share a single id, so the reducer deletes them together or not at all.
- * 
- * Hardcoded %2 and %3 to create assymetric conditions, works in this case when input buffer (thread value) harded to 60.
  */
 private fun createDivergentCounterPair(
     fuzzerSettings: FuzzerSettings,
     context: EntryPointContext,
-    incrementValue: Expression,
-    decrementValue: Expression,
 ): List<Statement> {
-    val id = fuzzerSettings.getUniqueId() // both conditions share a single id, so that both deleted together
+    // The counter is declared u32 by counterInstance, so the perturbation operand must be u32 too.
+    val perturbation = choosePerturbation(fuzzerSettings, Type.U32) ?: return emptyList()
     val guards = chooseConditionTemplate(fuzzerSettings, context)
-    val incrementIf =
-        Statement.If(
-            condition = guards.perturbGuard(context),
-            thenBranch =
-                Statement.Compound(
-                    listOf(
-                        Statement.Assignment(
-                            lhsExpression = context.counter(),
-                            assignmentOperator = AssignmentOperator.PLUS_EQUAL,
-                            rhs = incrementValue.clone(),
-                        ),
-                    ),
-                ),
-            metadata = setOf(AugmentedMetadata.DeletableStatement(id, "divergent perturbation: ${guards.commentary}")),
-        )
-    val decrementIf =
-        Statement.If(
-            condition = guards.restoreGuard(context),
-            thenBranch =
-                Statement.Compound(
-                    listOf(
-                        Statement.Assignment(
-                            lhsExpression = context.counter(),
-                            assignmentOperator = AssignmentOperator.MINUS_EQUAL,
-                            rhs = decrementValue.clone(),
-                        ),
-                    ),
-                ),
-            metadata = setOf(AugmentedMetadata.DeletableStatement(id, "divergent restore")),
-        )
-    return listOf(incrementIf, decrementIf)
+    val id = fuzzerSettings.getUniqueId() // one id per pair, so the reducer deletes both or neither
+    val target = context.counter()
+    return listOf(
+        perturbationStatement(
+            guard = guards.perturbGuard(context),
+            target = target,
+            newValue = perturbation.perturb(target),
+            id = id,
+            commentary = "divergent perturbation: ${perturbation.commentary} under ${guards.commentary}",
+        ),
+        perturbationStatement(
+            guard = guards.restoreGuard(context),
+            target = target,
+            newValue = perturbation.restore(target),
+            id = id,
+            commentary = "divergent restore",
+        ),
+    )
 }
 
 /**
@@ -161,15 +146,13 @@ private fun injectDivergentInjections(
     node: AstNode,
     injections: DivergentCounterInjections,
     counterWrite: Statement?,
-    incrementValue: Expression,
-    decrementValue: Expression,
 ): AstNode? =
     injections[node]?.let { indices ->
         val compound = node as Statement.Compound
         val newBody = mutableListOf<Statement>()
         for (index in 0..compound.statements.size) {
             if (index in indices) { // inject adjacent perturb/restore pair at this index
-                newBody.addAll(createDivergentCounterPair(fuzzerSettings, context, incrementValue, decrementValue))
+                newBody.addAll(createDivergentCounterPair(fuzzerSettings, context))
             }
             if (index < compound.statements.size) {
                 val statement = compound.statements[index]
@@ -179,11 +162,7 @@ private fun injectDivergentInjections(
                 }
                 // Add original statements. Recursive, to inject into nested (compound) statements.
                 newBody.add(
-                    statement.clone {
-                        injectDivergentInjections(
-                            fuzzerSettings, context, it, injections, counterWrite, incrementValue, decrementValue,
-                        )
-                    },
+                    statement.clone { injectDivergentInjections(fuzzerSettings, context, it, injections, counterWrite) },
                 )
             }
         }
@@ -211,15 +190,8 @@ private fun buildInjectedBody(
     body: Statement.Compound,
     injections: DivergentCounterInjections,
     counterWrite: Statement?,
-    incrementValue: Expression,
-    decrementValue: Expression,
 ): Statement.Compound {
-    val injectedBody =
-        body.clone {
-            injectDivergentInjections(
-                fuzzerSettings, context, it, injections, counterWrite, incrementValue, decrementValue,
-            )
-        }
+    val injectedBody = body.clone { injectDivergentInjections(fuzzerSettings, context, it, injections, counterWrite) }
     val statements = mutableListOf<Statement>()
     // Declare the counter at the top of the entry point.
     statements.add(counterInstance(COUNTER_INITIAL_VALUE, context.counterName!!))
@@ -252,14 +224,7 @@ internal fun applyV0(
                     opaqueI32 = null, // v0 injects no input buffer
                 )
             val counterWrite = createCounterOverwrite(shaderJob, context)
-            val randVal = fuzzerSettings.randomInt(1000)
-            val magnitude = Expression.IntLiteral("${randVal}u")
-            val body =
-                buildInjectedBody(
-                    fuzzerSettings, context, decl.body, injections, counterWrite,
-                    incrementValue = magnitude,
-                    decrementValue = magnitude,
-                )
+            val body = buildInjectedBody(fuzzerSettings, context, decl.body, injections, counterWrite)
             decl.withParametersAndBody(context.parameters, body)
         }
     return rebuildShaderJob(shaderJob, newGlobalDecls)
@@ -291,27 +256,8 @@ internal fun applyV1(
                     opaqueI32 = { Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER) }, // single thread selected to run
                 )
 
-            val incrementValue = context.opaque()!!
-            val decrementValue =
-                Expression.Binary(
-                    operator = BinaryOperator.MODULO,
-                    lhs = context.opaque()!!,
-                    rhs =
-                        Expression.Paren(
-                            target =
-                                Expression.Binary(
-                                    BinaryOperator.MINUS,
-                                    Expression.IntLiteral("4294967295u"), // max u32
-                                    context.opaque()!!,
-                                ),
-                        ),
-                )
-
             val counterWrite = createCounterWrite(context, outputBufferName = outputInstance.name)
-            val body =
-                buildInjectedBody(
-                    fuzzerSettings, context, decl.body, injections, counterWrite, incrementValue, decrementValue,
-                )
+            val body = buildInjectedBody(fuzzerSettings, context, decl.body, injections, counterWrite)
             // Only a single thread runs, all other threads return immediately
             val gatedBody =
                 Statement.Compound(
