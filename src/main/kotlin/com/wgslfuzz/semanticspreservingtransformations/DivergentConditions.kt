@@ -5,6 +5,7 @@ import com.wgslfuzz.core.Expression
 import com.wgslfuzz.core.clone
 
 // Boolean guards wrapped around injected perturbation statements.
+// Conditions are meant to create divergence across invocations, to trigger different compiler optimisations and arrangements.
 //
 // A perturb/restore pair is only semantics preserving if BOTH guards evaluate the same way for
 // every invocation. The catalogue in this file will make that true by construction: one template
@@ -26,8 +27,7 @@ internal fun modNCondition(
         lhs =
             Expression.Binary(
                 operator = BinaryOperator.MODULO,
-                // cloned by the caller so a distinct instance is created for every condition
-                lhs = Expression.MemberLookup(lidExpr, "x"),
+                lhs = Expression.MemberLookup(lidExpr.clone(), "x"),
                 rhs = Expression.IntLiteral("${n}u"),
             ),
         rhs = Expression.IntLiteral("0u"),
@@ -38,8 +38,6 @@ internal fun modNCondition(
  *
  * [threadSelector] reads the value from the injected input buffer (`thread_to_run.data`) rather
  * than being a literal, so the comparison cannot be constant-folded away at compile time.
- * lid.x is u32 and the selector is i32, so lid.x is converted to i32 to keep the comparison
- * well-typed.
  */
 internal fun singleThreadCondition(
     lidExpr: Expression,
@@ -48,6 +46,6 @@ internal fun singleThreadCondition(
 ): Expression =
     Expression.Binary(
         operator = if (equals) BinaryOperator.EQUAL_EQUAL else BinaryOperator.NOT_EQUAL,
-        lhs = Expression.I32ValueConstructor(listOf(Expression.MemberLookup(lidExpr, "x"))),
+        lhs = Expression.MemberLookup(lidExpr, "x"),
         rhs = threadSelector.clone(),
     )

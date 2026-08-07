@@ -7,34 +7,29 @@ import com.wgslfuzz.core.ShaderJob
 //   if (<divergent condition>) { <target> = <restore(target)>; }
 // , where <divergent condition> is derived from local_invocation_id
 // , where <target> is a synthesized scalar variable (v0, v1) or an existing local variable (v2).
-// Because both `if`s evaluate the same way for a given invocation, each invocation either takes
-// both branches or neither, so <target> is ultimately unchanged -- the transformation is
-// semantics preserving.
+// Because both `if`s evaluate the same way for a given invocation, each invocation either takes both branches or neither,
+// so <target> is ultimately unchanged -- the transformation is semantics preserving.
 //
 // Differs from the other transformations in this package in one important way:
-// - existing opaque conditions (see KnownValueExpressions.kt) are derived from uniform buffer
-//   values, so every invocation in a dispatch takes the same branch -- no divergence.
-// - Our condition is invocation-varying by construction, so different invocations genuinely
+// - existing opaque conditions (see KnownValueExpressions.kt) are derived from uniform buffer values,
+//    so every invocation in a dispatch takes the same branch -- no divergence.
+// - Our condition is invocation-varying by construction (depends on lid), so different invocations genuinely
 //   diverge, exercising compiler/backend code paths for non-uniform control flow.
-//
-// Specifically local_invocation_id (not global_invocation_id/workgroup_id): it is paired with an
-// oracle that runs the same instrumented shader twice, once under its original @workgroup_size and
-// once with it bumped to some N > 1 (see fuzz/divergenceOracle). At @workgroup_size(1),
-// local_invocation_id is always (0,0,0), so the injected condition is trivially uniform.
+//   Our tool is focused on creating a mixture of uniform and divergent control and data flow, so this is a useful stress test.
 //
 // v0 (DivergentCounterInjection.kt):
 // - Every exit from the entry point writes the counter into the first scalar of the shader's
 //   output buffer.
 // - Whichever thread performs the final overwrite, the value should be COUNTER_INITIAL_VALUE,
 //   since every invocation perturbs and restores the counter the same number of times.
+//   [eg. thread 60 perturb 3 times, and restores 3 times; thread 9 perturb 1 time and restores 1 time.]
 // - The oracle checks that the output buffer's 0th scalar is COUNTER_INITIAL_VALUE. Other values
 //   in the buffer are not compared across shader variants, because a racing multi-thread dispatch
 //   makes them non-deterministic.
 //
 // v1 (DivergentCounterInjection.kt): similar to v0 except
 // - Only the thread selected by the injected input buffer runs; all others return immediately.
-// - Deterministic, so the oracle can compare the entire output buffer across variants rather than
-//   just the 0th scalar.
+// - Deterministic, so the oracle can compare the entire output buffer across variants rather than just the 0th scalar.
 // - The counter lives in its own dedicated output buffer.
 //
 // v2 (DivergentLocalInjection.kt): similar to v1 except
@@ -50,7 +45,8 @@ import com.wgslfuzz.core.ShaderJob
 //   chosen, and where within it the two statements land, is randomized.
 //
 // Every @compute entry point is instrumented:
-// - if local_invocation_id is not already among its parameters (directly, or via a struct
+// - Limited to entry points because only they have direct access to local_invocation_id
+// - If local_invocation_id is not already among its parameters (directly, or via a struct
 //   parameter), a fresh parameter (`@builtin(local_invocation_id) divergent_lid_<id>: vec3<u32>`)
 //   is appended to the entry point's parameter list. A struct parameter is only ever read from,
 //   never synthesized: WGSL forbids the same builtin appearing twice across an entry point's
@@ -74,6 +70,8 @@ internal const val MAX_OUTPUT_NESTING_DEPTH = 16
 // restore -- the value it must still hold when the entry point exits.
 // Not 0, so that the expected end state is distinct from a zero buffer produced by accident.
 // The divergence oracle asserts this exact value; keep fuzz/lib/divergenceCheck.sh in step.
+// No particular significance to 993, just a distinctive non-zero constant.
+// Also, no point in making this user-configurable.
 internal const val COUNTER_INITIAL_VALUE = 993
 
 // The single i32 member shared by v1's injected input (thread selector) and output (counter) structs.

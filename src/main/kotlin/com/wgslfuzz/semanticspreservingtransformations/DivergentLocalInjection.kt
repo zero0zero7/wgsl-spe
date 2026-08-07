@@ -13,7 +13,7 @@ import kotlin.math.min
 // the variable is genuinely live program state rather than a throwaway diagnostic.
 
 /**
- * 50% chance of selecting each candidate, but at least one is always selected.
+ * 50% chance of selecting each existing local var as target, but at least one is always selected.
  */
 private fun selectLocalVariableTargets(
     fuzzerSettings: FuzzerSettings,
@@ -33,9 +33,8 @@ internal fun applyV2(
     val (inputBinding, _) = nextTwoBindings(shaderJob)
     val inputStruct = dataStruct(fuzzerSettings.getUniqueId())
     val inputBuffer = threadToRunInputInstance(inputBinding, inputStruct.name)
-    var requireGate = true
 
-    fun recursiveInjectLocalVariableModifiers(
+    fun recursiveInjectTargetModifiers(
         context: EntryPointContext,
         compound: Statement.Compound,
         injections: Map<Statement.Compound, List<Pair<LocalVariableTarget, Int>>>,
@@ -46,36 +45,27 @@ internal fun applyV2(
 
         // Suitable targets = targets in an outer scope + targets in this scope declared before
         // the statement being descended into.
-        fun targetsVisibleInside(statementIndex: Int): List<Pair<LocalVariableTarget, Int>> =
+        fun targetsVisible(statementIndex: Int): List<Pair<LocalVariableTarget, Int>> =
             ancestorTargets +
                 currentTargets.filter { (target, _) ->
                     target.declIndex != null && target.declIndex < statementIndex
                 }
 
         val newStatements = mutableListOf<Statement>()
-        if (requireGate) {
-            newStatements.add(
-                0,
-                Statement.If(
-                    condition = singleThreadCondition(context.lid(), context.opaque()!!, equals = false),
-                    thenBranch = Statement.Compound(listOf(Statement.Return(null))),
-                ),
-            )
-            requireGate = false
-        }
 
         // ----- No suitable declaration in this scope -----
         // Traversal must continue: a nested scope may have targets. Return a cloned scope.
         if (qualifiedTargets.isEmpty()) {
             compound.statements.forEachIndexed { statementIndex, statement ->
                 newStatements.add(
+                    // Clone the entire compound statement, but with a transformation that recurses into nested compounds and adds injections to them if previously computed.
                     statement.clone { node ->
                         if (node is Statement.Compound) {
-                            recursiveInjectLocalVariableModifiers(
+                            recursiveInjectTargetModifiers(
                                 context,
                                 node,
                                 injections,
-                                targetsVisibleInside(statementIndex),
+                                targetsVisible(statementIndex),
                             )
                         } else {
                             null
@@ -125,11 +115,11 @@ internal fun applyV2(
                 newStatements.add(
                     compound.statements[i].clone { node ->
                         if (node is Statement.Compound) {
-                            recursiveInjectLocalVariableModifiers(
+                            recursiveInjectTargetModifiers(
                                 context,
                                 node,
                                 injections,
-                                targetsVisibleInside(i),
+                                targetsVisible(i),
                             )
                         } else {
                             null
@@ -162,9 +152,20 @@ internal fun applyV2(
                 )
 
             // Recursively, starting from the outermost scope ie. the entry point body.
-            val newBody = recursiveInjectLocalVariableModifiers(context, decl.body, injectionsByCompound)
+            val newBody = recursiveInjectTargetModifiers(context, decl.body, injectionsByCompound)
+            // Gate entry point to a single thread. 
+            val gatedBody =
+                Statement.Compound(
+                    listOf(
+                        Statement.If(
+                            condition = singleThreadCondition(context.lid(), context.opaque()!!, equals = false),
+                            thenBranch = Statement.Compound(listOf(Statement.Return(null))),
+                        ),
+                    ) + newBody.statements,
+                    newBody.metadata,
+                )
 
-            decl.withParametersAndBody(context.parameters, newBody)
+            decl.withParametersAndBody(context.parameters, gatedBody)
         }
     return rebuildShaderJob(shaderJob, newGlobalDecls, listOf(inputStruct, inputBuffer))
 }

@@ -16,16 +16,17 @@ import com.wgslfuzz.core.clone
 import com.wgslfuzz.core.toType
 import com.wgslfuzz.core.traverse
 
-// v0 and v1: inject a SYNTHESISED i32 counter into each @compute entry point, perturb it at
-// randomly chosen sites, and write it out so an oracle can check it came back to
-// COUNTER_INITIAL_VALUE. v2 (DivergentLocalInjection.kt) instead hijacks a variable the shader
-// already has.
+// v0 and v1: inject a SYNTHESISED i32 counter into each @compute entry point,
+// perturb it at randomly chosen sites, and write it out 
+// so an oracle can check it came back to COUNTER_INITIAL_VALUE. 
 
 internal typealias DivergentCounterInjections = MutableMap<Statement.Compound, Set<Int>>
 
 /**
  * For v0 and v1: one perturb/restore pair applied to the synthesised counter.
  * Both statements share a single id, so the reducer deletes them together or not at all.
+ * 
+ * Hardcoded %2 and %3 to create assymetric conditions, works in this case when input buffer (thread value) harded to 60.
  */
 private fun createDivergentCounterPair(
     fuzzerSettings: FuzzerSettings,
@@ -68,6 +69,7 @@ private fun createDivergentCounterPair(
 }
 
 /**
+ * v0.
  * The shader's output buffer: the module-scope `var<storage, read_write>`.
  * wgslsmith emits exactly one (`s_output`); if a shader somehow has several, the first is used,
  * since that is also the one the harness dumps first.
@@ -78,8 +80,9 @@ private fun findExistingOutputBuffer(shaderJob: ShaderJob): GlobalDecl.Variable?
         .firstOrNull { it.addressSpace == AddressSpace.STORAGE && it.accessMode == AccessMode.READ_WRITE }
 
 /**
+ * v0.
  * `<existing_output>.<..first scalar..> = <scalarType>(<counter>);`
- * Returns null when the shader has no output buffer. For v0.
+ * Returns null when the shader has no output buffer.
  */
 private fun createCounterOverwrite(
     shaderJob: ShaderJob,
@@ -92,7 +95,7 @@ private fun createCounterOverwrite(
     val (lhs, scalarType) =
         firstScalarLeaf(LhsExpression.Identifier(outputBuffer.name), outputType, 0)
             ?: return null
-    // The counter is i32; convert rather than assume, so that an output buffer starting with
+    // The counter is u32; convert rather than assume, so that an output buffer starting with
     // eg. mat3x3<f32> or u32 gets a well-typed store.
     val counter = context.counterExpr()
     val rhs: Expression =
@@ -111,7 +114,8 @@ private fun createCounterOverwrite(
 }
 
 /**
- * `<counter_output>.data = i32(<counter>);`
+ * v1.
+ * `<counter_output>.data = u32(<counter>);`
  * Stores the counter into v1's dedicated output struct.
  */
 private fun createCounterWrite(
@@ -122,13 +126,15 @@ private fun createCounterWrite(
     return Statement.Assignment(
         lhsExpression = lhs,
         assignmentOperator = AssignmentOperator.EQUAL,
-        rhs = Expression.I32ValueConstructor(listOf(context.counterExpr())),
+        rhs = Expression.U32ValueConstructor(listOf(context.counterExpr())),
     )
 }
 
 /**
- * For v0 and v1: given an entry point's function body, randomly select a set of indices within
+ * v0, v1.
+ * Given an entry point's function body, randomly select a set of indices within
  * each Compound where a perturb/restore pair should be injected.
+ * Can be anywhere since the perturb/restore pair are adjacent and the counter is a synthesized variable, so no scoping issues.
  */
 private fun selectInjectionPoints(
     fuzzerSettings: FuzzerSettings,
@@ -138,16 +144,15 @@ private fun selectInjectionPoints(
     traverse({ n, acc -> selectInjectionPoints(fuzzerSettings, n, acc) }, node, injections)
     if (node is Statement.Compound) {
         val range = 0..node.statements.size
-        val filtered = range.filter { fuzzerSettings.randomInt(100) < 30 }
-        // Fall back to a single random index if all were filtered out, so at least one injection
-        // occurs in this compound.
+        val filtered = range.filter { fuzzerSettings.randomInt(100) < 30 } // 30% chance to select each index
+        // Fall back to a single random index if all were filtered out, so at least one injection occurs in each compound.
         injections[node] = filtered.ifEmpty { listOf(fuzzerSettings.randomElement(range.toList())) }.toSet()
     }
 }
 
 /**
- * For v0 and v1: injects the perturb/restore pair into every Compound at the indices selected by
- * [selectInjectionPoints].
+ * v0, v1
+ * Injects the perturb/restore pair into every Compound at the indices selected by [selectInjectionPoints].
  */
 private fun injectDivergentInjections(
     fuzzerSettings: FuzzerSettings,
@@ -162,7 +167,7 @@ private fun injectDivergentInjections(
         val compound = node as Statement.Compound
         val newBody = mutableListOf<Statement>()
         for (index in 0..compound.statements.size) {
-            if (index in indices) {
+            if (index in indices) { // inject adjacent perturb/restore pair at this index
                 newBody.addAll(createDivergentCounterPair(fuzzerSettings, context, incrementValue, decrementValue))
             }
             if (index < compound.statements.size) {
@@ -195,8 +200,9 @@ private fun computeInjectionsOrNull(
 }
 
 /**
- * Applies [injections], then wraps with the initial counter decl and (if not already followed by
- * a return) a trailing counter write. Shared by v0/v1.
+ * v0, v1.
+ * Applies [injections], then wraps with the initial counter declaration and (if not already followed by
+ * a return) a trailing counter write.
  */
 private fun buildInjectedBody(
     fuzzerSettings: FuzzerSettings,
@@ -214,8 +220,10 @@ private fun buildInjectedBody(
             )
         }
     val statements = mutableListOf<Statement>()
+    // Declare the counter at the top of the entry point.
     statements.add(counterInstance(COUNTER_INITIAL_VALUE, context.counterName!!))
     statements.addAll(injectedBody.statements)
+    // If the last statement is a return, the counter write has already been inserted before it, so don't add it again.
     if (counterWrite != null && injectedBody.statements.lastOrNull() !is Statement.Return) {
         statements.add(counterWrite.clone())
     }
@@ -244,7 +252,7 @@ internal fun applyV0(
                 )
             val counterWrite = createCounterOverwrite(shaderJob, context)
             val randVal = fuzzerSettings.randomInt(1000)
-            val magnitude = Expression.IntLiteral("${randVal}i")
+            val magnitude = Expression.IntLiteral("${randVal}u")
             val body =
                 buildInjectedBody(
                     fuzzerSettings, context, decl.body, injections, counterWrite,
@@ -279,7 +287,7 @@ internal fun applyV1(
                     lidExpr = lidExpr,
                     parameters = parameters,
                     counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}",
-                    opaqueI32 = { Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER) },
+                    opaqueI32 = { Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER) }, // single thread selected to run
                 )
 
             val incrementValue = context.opaque()!!
@@ -292,7 +300,7 @@ internal fun applyV1(
                             target =
                                 Expression.Binary(
                                     BinaryOperator.MINUS,
-                                    Expression.IntLiteral("2147483645i"),
+                                    Expression.IntLiteral("4294967295u"), // max u32
                                     context.opaque()!!,
                                 ),
                         ),
@@ -303,7 +311,7 @@ internal fun applyV1(
                 buildInjectedBody(
                     fuzzerSettings, context, decl.body, injections, counterWrite, incrementValue, decrementValue,
                 )
-
+            // Only a single thread runs, all other threads return immediately
             val gatedBody =
                 Statement.Compound(
                     listOf(

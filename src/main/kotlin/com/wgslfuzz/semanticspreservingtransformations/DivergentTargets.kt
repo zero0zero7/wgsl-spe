@@ -22,8 +22,9 @@ import com.wgslfuzz.core.toType
 import com.wgslfuzz.core.traverse
 
 // Read-only analysis over the shader being transformed, plus the small helpers that
-// shape an lvalue or a declaration list. Nothing here injects anything or draws a random
-// number; the two catalogues and the two injection strategies build on it.
+// shape an lvalue or a declaration list. 
+// Nothing here injects anything or draws a random number;
+// the two catalogues and the two injection strategies build on it.
 
 // ---------- per-entry-point state ----------
 
@@ -31,13 +32,11 @@ import com.wgslfuzz.core.traverse
  * Everything an injection site needs to know about the entry point currently being instrumented.
  *
  * Built once per entry point inside each applyV*'s [mapComputeFunctions] lambda and threaded as an
- * explicit parameter. This replaces the `lateinit var` fields that used to live on the transform
- * class: those were per-*ShaderJob* state standing in for per-*entry-point* state, which is what
- * let v0 read an `incrementValue` only v1 ever assigned.
+ * explicit parameter.
  */
 internal class EntryPointContext(
     private val lidExpr: Expression,
-    /** decl.parameters, extended with a synthesised lid ParameterDecl when one was needed. */
+    /** decl.parameters, extended with a synthesised lid ParameterDecl when one is needed. */
     val parameters: List<ParameterDecl>,
     /** The synthesised i32 counter local. Null for v2, which hijacks an existing var instead. */
     val counterName: String? = null,
@@ -62,8 +61,8 @@ internal class EntryPointContext(
 // ---------- locating local_invocation_id ----------
 
 /**
- * Finds an expression that reads local_invocation_id from an EXISTING parameter (directly, or via
- * a struct parameter). Returns null if none is present yet.
+ * Finds an expression that reads local_invocation_id from an EXISTING parameter 
+ * Returns null if none is present yet.
  */
 internal fun findExistingLID(
     shaderJob: ShaderJob,
@@ -75,13 +74,14 @@ internal fun findExistingLID(
             return Expression.Identifier(parameter.name)
         }
     }
+    // Find LID embedded within a struct parameter
     for (parameter in function.parameters) {
         val structName = (parameter.typeDecl as? TypeDecl.NamedType)?.name ?: continue
-        val structDecl =
+        val structDecl = // Find the struct decl with the matching name
             shaderJob.tu.globalDecls
                 .filterIsInstance<GlobalDecl.Struct>()
                 .firstOrNull { it.name == structName } ?: continue
-        val member =
+        val member = // Find the member of the struct that is local_invocation_id
             structDecl.members.firstOrNull { member ->
                 member.attributes.filterIsInstance<Attribute.Builtin>().any { it.name == BuiltinValue.LOCAL_INVOCATION_ID }
             } ?: continue
@@ -91,7 +91,7 @@ internal fun findExistingLID(
 }
 
 /**
- * Finds (or synthesizes) the local_invocation_id expression for [functionDecl], returning it
+ * Finds / synthesizes the local_invocation_id expression for [functionDecl], returning it
  * alongside the (possibly extended) parameter list.
  */
 internal fun getLidExpr(
@@ -111,8 +111,7 @@ internal fun getLidExpr(
 // ---------- finding a scalar target ----------
 
 /**
- * Walks [type] down to its first scalar leaf, extending [base] with the member/index lookups
- * needed to name that leaf.
+ * Walks [base] of [type] down to its first scalar leaf, extending [base] with the member/index lookups needed to name that leaf.
  */
 internal fun firstScalarLeaf(
     base: LhsExpression,
@@ -132,7 +131,6 @@ internal fun firstScalarLeaf(
             } else {
                 LhsExpression.IndexLookup(base, zeroIndex()) to type.elementType
             }
-        // A matrix indexes to a column vector first, so it takes two steps to reach a scalar.
         is Type.Matrix ->
             LhsExpression.IndexLookup(LhsExpression.IndexLookup(base, zeroIndex()), zeroIndex()) to type.elementType
         is Type.Array ->
@@ -212,13 +210,9 @@ internal fun findLocalVariableCandidates(
             collectDirectScopeInfo(statement, info)
             // Collect local variable declaration, and add it as a candidate if it resolves to a scalar
             if (statement is Statement.Variable) {
-                val variableType =
-                    // variable type explicitly declared
-                    statement.typeDecl
-                        ?.toType(shaderJob.environment.globalScope, shaderJob.environment)
-                        // if not, infer from initializer
-                        ?: statement.initializer
-                            ?.let { shaderJob.environment.typeOf(it).asStoreTypeIfReference() }
+                val variableType = 
+                    statement.typeDecl?.toType(shaderJob.environment.globalScope, shaderJob.environment) // Variable type explicitly declared
+                        ?: statement.initializer?.let { shaderJob.environment.typeOf(it).asStoreTypeIfReference() } // If not, infer from initializer
                 // Extract numeric scalar leaf of variable using the type
                 variableType?.let { type ->
                     firstScalarLeaf(LhsExpression.Identifier(statement.name), type, 0)?.let { (target, targetType) ->
@@ -250,10 +244,10 @@ internal fun findLocalVariableCandidates(
 // ---------- binding allocation and job rebuilding ----------
 
 /**
- * Last-assigned @binding used by any module-scope variable in @group([group]), or null if the
- * group binds nothing. Read straight off the AST attributes so it accounts for every buffer
- * (including read_write outputs), not just those the pipeline state tracks values for -- ie.
- * includes output buffers, ensuring no binding collision.
+ * Last-assigned @binding used by any module-scope variable in @group([group]),
+ *  or null if the group binds nothing. 
+ * Reads straight off the AST attributes to account for every buffer 
+ * (including read_write output buffers, not just those the pipeline state tracks values for)
  */
 internal fun lastBindingForGroup(
     shaderJob: ShaderJob,
@@ -286,8 +280,7 @@ internal fun rebuildShaderJob(
 
 /**
  * Converts an LhsExpression back into a readable Expression, following the same path.
- * [firstScalarLeaf] only ever builds targets out of these node kinds, so Dereference/AddressOf
- * are unreachable here.
+ * [firstScalarLeaf] gives the target variable as an LhsExpression, but the perturb/restore statements need a regular Expression.
  */
 internal fun lhsExprToExpr(lhs: LhsExpression): Expression =
     when (lhs) {
@@ -299,7 +292,10 @@ internal fun lhsExprToExpr(lhs: LhsExpression): Expression =
             error("firstScalarLeaf never produces a Dereference/AddressOf target")
     }
 
-/** The variable name at the root of an lvalue chain (through member/index/paren/deref), or null. */
+/** The variable name at the root of an lvalue chain (through member/index/paren/deref), or null. 
+ * Unlike [lhsExprToExpr], [lhsBaseIdentifierName] is used to detect reads of a variable in a statement,
+ *  even if the read is through a member/index.
+ */
 internal fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
     when (lhs) {
         is LhsExpression.Identifier -> lhs.name
@@ -322,30 +318,30 @@ internal fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
 internal fun isDisqualifyingExit(statement: Statement): Boolean =
     statement is Statement.Break || statement is Statement.Return || statement is Statement.Discard
 
-/** True if [statement] reads [name]. */
-internal fun statementReadsIdentifier(
-    statement: Statement,
-    name: String,
-): Boolean {
-    for (node in nodesPreOrder(statement)) {
-        if (node is Expression.Identifier && node.name == name) return true
-        // For compound assignment (self-referential) statements, the lhs is also considered a read
-        if (node is Statement.Assignment && node.assignmentOperator != AssignmentOperator.EQUAL) {
-            val lhsName = lhsBaseIdentifierName(node.lhsExpression)
-            if (lhsName == name) return true
-        }
-    }
-    return false
-}
+// /** True if [statement] reads [name]. */
+// internal fun statementReadsIdentifier(
+//     statement: Statement,
+//     name: String,
+// ): Boolean {
+//     for (node in nodesPreOrder(statement)) {
+//         if (node is Expression.Identifier && node.name == name) return true
+//         // For compound assignment (self-referential) statements, the lhs is also considered a read
+//         if (node is Statement.Assignment && node.assignmentOperator != AssignmentOperator.EQUAL) {
+//             val lhsName = lhsBaseIdentifierName(node.lhsExpression)
+//             if (lhsName == name) return true
+//         }
+//     }
+//     return false
+// }
 
-/**
- * True if [expr] contains a genuine read of [name] (an Expression.Identifier) as opposed to an
- * Lhs value (which could be a write).
- */
-internal fun expressionReadsIdentifier(
-    expr: Expression,
-    name: String,
-): Boolean = nodesPreOrder(expr).any { it is Expression.Identifier && it.name == name }
+// /**
+//  * True if [expr] contains a genuine read of [name] (an Expression.Identifier) as opposed to an
+//  * Lhs value (which could be a write).
+//  */
+// internal fun expressionReadsIdentifier(
+//     expr: Expression,
+//     name: String,
+// ): Boolean = nodesPreOrder(expr).any { it is Expression.Identifier && it.name == name }
 
 internal fun zeroIndex(): Expression = Expression.IntLiteral("0i")
 
@@ -385,15 +381,15 @@ internal inline fun mapComputeFunctions(
 
 /** Rebuilds [this] with a new parameter list and body; everything else is untouched. */
 internal fun GlobalDecl.Function.withParametersAndBody(
-    parameters: List<ParameterDecl>,
-    body: Statement.Compound,
+    newParameters: List<ParameterDecl>,
+    newBody: Statement.Compound,
 ): GlobalDecl.Function =
     GlobalDecl.Function(
         attributes = attributes,
         name = name,
-        parameters = parameters,
+        parameters = newParameters,
         returnAttributes = returnAttributes,
         returnType = returnType,
-        body = body,
+        body = newBody,
         metadata = metadata,
     )
