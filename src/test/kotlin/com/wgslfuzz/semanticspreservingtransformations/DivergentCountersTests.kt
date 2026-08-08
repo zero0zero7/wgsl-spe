@@ -76,7 +76,7 @@ class DivergentCountersTests {
         val originalParamNames = computeEntryPoint(shaderJob).parameters.map { it.name }
         assertEquals(1, computeEntryPoint(shaderJob).parameters.size, "sample should start with exactly one parameter (gid)")
 
-        val transformed = addDivergentCountersV0(shaderJob, DefaultFuzzerSettings(Random(1)))
+        val transformed = applyV0(shaderJob, DefaultFuzzerSettings(Random(1)))
         val transformedEntryPoint = computeEntryPoint(transformed)
         val text = emit(transformed)
 
@@ -127,7 +127,7 @@ class DivergentCountersTests {
             },
         )
 
-        val transformed = addDivergentCountersV0(shaderJob, DefaultFuzzerSettings(Random(1)))
+        val transformed = applyV0(shaderJob, DefaultFuzzerSettings(Random(1)))
         val transformedEntryPoint = computeEntryPoint(transformed)
         val text = emit(transformed)
 

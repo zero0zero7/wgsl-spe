@@ -36,10 +36,11 @@ internal fun applyV2(
 
     fun recursiveInjectTargetModifiers(
         context: EntryPointContext,
-        compound: Statement.Compound,
+        compoundInfo: CompoundInfo,
         injections: Map<Statement.Compound, List<LocalVariableTarget>>,
         ancestorTargets: List<LocalVariableTarget> = emptyList(),
     ): Statement.Compound {
+        val compound = compoundInfo.compound
         val currentTargets = injections[compound] ?: emptyList()
         val qualifiedTargets = ancestorTargets + currentTargets
 
@@ -52,6 +53,7 @@ internal fun applyV2(
                 }
 
         val newStatements = mutableListOf<Statement>()
+        var childCompoundIdx = 0
 
         // ----- No suitable declaration in this scope -----
         // Traversal must continue: a nested scope may have targets. Return a cloned scope.
@@ -61,7 +63,7 @@ internal fun applyV2(
                     // Clone the entire compound statement, but with a transformation that recurses into nested compounds and adds injections to them if previously computed.
                     statement.clone { node ->
                         if (node is Statement.Compound) {
-                            recursiveInjectTargetModifiers(context, node, injections, targetsVisible(statementIndex))
+                            recursiveInjectTargetModifiers(context, compoundInfo.childrenCompound[childCompoundIdx++], injections, targetsVisible(statementIndex))
                         } else {
                             null
                         }
@@ -72,8 +74,9 @@ internal fun applyV2(
         }
 
         // ----- There are suitable modification targets -----
-        // Pick a random target and two random indices, keeping both after the declaration when
-        // the target is declared in this scope.
+        // Pick a random target and two random indices,
+        // - keep both after the declaration when the target is declared in this scope
+        // - keep both before the read if target is read in this scope
         val target = fuzzerSettings.randomElement(qualifiedTargets)
         val perturbation = choosePerturbation(fuzzerSettings, context, target.targetType)
         if (perturbation == null) {
@@ -83,7 +86,7 @@ internal fun applyV2(
                 newStatements.add(
                     statement.clone { node ->
                         if (node is Statement.Compound) {
-                            recursiveInjectTargetModifiers(context, node, injections, targetsVisible(statementIndex))
+                            recursiveInjectTargetModifiers(context, compoundInfo.childrenCompound[childCompoundIdx++], injections, targetsVisible(statementIndex))
                         } else {
                             null
                         }
@@ -94,14 +97,20 @@ internal fun applyV2(
         }
         val id = fuzzerSettings.getUniqueId()
         val lowestIndex =
-            if (target.declCompound == compound) {
+            if (target.declCompound == compound) { // target is declared in this scope, so the perturbation must be after it
                 assert(target.declIndex != null)
                 (target.declIndex ?: -1) + 1
             } else {
                 0
             }
-        val index1: Int = fuzzerSettings.randomInt(lowestIndex, compound.statements.size + 1)
-        val index2: Int = fuzzerSettings.randomInt(lowestIndex, compound.statements.size + 1)
+        val highestIndex =
+            compoundInfo.reads
+                .filter{ (name, index) -> name == lhsBaseIdentifierName(target.target) && index >= lowestIndex }
+                .minOfOrNull { (_, index) -> index }
+                ?: compound.statements.size
+        // +1 to include highestIndex as the max legal index for injection
+        val index1: Int = fuzzerSettings.randomInt(lowestIndex, highestIndex+ 1)
+        val index2: Int = fuzzerSettings.randomInt(lowestIndex, highestIndex + 1)
 
         // Both statements carry the SAME id, so the reducer deletes them together or not at all,
         // and ONE condition template supplies both guards, so they cannot disagree.
@@ -131,11 +140,7 @@ internal fun applyV2(
                 newStatements.add(
                     compound.statements[i].clone { node ->
                         if (node is Statement.Compound) {
-                            recursiveInjectTargetModifiers(
-                                context,
-                                node,
-                                injections,
-                                targetsVisible(i),
+                            recursiveInjectTargetModifiers(context, compoundInfo.childrenCompound[childCompoundIdx++],injections, targetsVisible(i),
                             )
                         } else {
                             null
@@ -149,7 +154,7 @@ internal fun applyV2(
 
     val newGlobalDecls =
         mapComputeFunctions(shaderJob.tu.globalDecls) { decl ->
-            val candidates = findLocalVariableCandidates(shaderJob, decl.body)
+            val (compoundInfo, candidates) = findLocalVariableCandidates(shaderJob, decl.body)
             if (candidates.isEmpty()) return@mapComputeFunctions decl
             val selected = selectLocalVariableTargets(fuzzerSettings, candidates)
             // Group the selected targets by their declaring compound.
@@ -166,7 +171,7 @@ internal fun applyV2(
                 )
 
             // Recursively, starting from the outermost scope ie. the entry point body.
-            val newBody = recursiveInjectTargetModifiers(context, decl.body, injectionsByCompound)
+            val newBody = recursiveInjectTargetModifiers(context, compoundInfo, injectionsByCompound)
             // Gate entry point to a single thread. 
             val gatedBody =
                 Statement.Compound(

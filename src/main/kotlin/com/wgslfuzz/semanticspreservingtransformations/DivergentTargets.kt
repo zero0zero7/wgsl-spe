@@ -177,37 +177,27 @@ internal data class LocalVariableTarget(
     val declIndex: Int?, // declaration index within the compound
 )
 
-/** Bundles the outputs of a single-statement, scope-stopping walk: see [collectDirectScopeInfo]. */
-internal class DirectScopeInfo {
-    // TODO: unused -- needed by the placement predicate (no read of the target between the pair)
-    // val readNames = mutableSetOf<String>()
-    val nestedCompounds = mutableListOf<Statement.Compound>()
+internal class CompoundInfo (
+    val compound: Statement.Compound,
+) {
+    val reads = mutableListOf<Pair<String, Int>>() // Each pair is identifierName, index of read in CURRENT compound
+    val childrenCompound = mutableListOf<CompoundInfo>()
 }
 
-/**
- * TODO
- * Collects every Compound reachable from [node] without crossing into a nested Statement.Compound,
- * so the caller knows which nested scopes to recurse into next.
- */
-internal fun collectDirectScopeInfo(
-    node: AstNode,
-    info: DirectScopeInfo,
-) {
-    when (node) {
-        is Statement.Compound -> {
-            info.nestedCompounds.add(node)
-            return
-        }
-        // TODO: identifier collection for DirectScopeInfo.readNames, see above
-        // is Expression.Identifier -> info.readNames.add(node.name)
-        // is Statement.Assignment ->
-        //     if (node.assignmentOperator != AssignmentOperator.EQUAL) {
-        //         lhsBaseIdentifierName(node.lhsExpression)?.let { info.readNames.add(it) }
-        //     }
-        else -> {}
-    }
-    traverse(::collectDirectScopeInfo, node, info)
-}
+
+// internal fun collectReads(
+//     node: AstNode,
+//     reads: MutableList<String>, // Names of local variables read in given compound, given index ie. specific statement in compound
+// ): List<String> {
+//     when (node) {
+//         is Statement.Compound -> throw IllegalArgumentException("collectReads must not be called on a Compound; nested scopes are handled by the caller")
+//         is Expression.Identifier -> reads.add(node.name)
+//         is Expression.ValueConstructor -> reads.add(node.constructorName)
+//         else -> {}
+//     }
+//     traverse(::collectReads, node, reads)
+//     return reads
+// }
 
 /**
  * For v2. Walks [body], treating every Statement.Compound as a lexical scope, and finds all local
@@ -216,18 +206,48 @@ internal fun collectDirectScopeInfo(
 internal fun findLocalVariableCandidates(
     shaderJob: ShaderJob,
     body: Statement.Compound,
-): List<LocalVariableTarget> {
+): Pair<CompoundInfo, List<LocalVariableTarget>> {
+    // Cannot use `traverse()` alone as we want to capture the INDEX of the line in the Statement.Compound
     fun walk(
-        compound: Statement.Compound,
+        compoundInfo: CompoundInfo,
         declarations: MutableList<LocalVariableTarget>,
     ) {
-        val statements = compound.statements
+        /** Helper function to collect reads of variables that have been declared
+         * Not a standalone function as it requires knowledge of declared vars
+         */
+        fun collectReads(
+            node: AstNode,
+            reads: MutableList<String>, // Names of local variables read in given compound, given index ie. specific statement in compound
+        ): List<String> {
+            // A read must name one of the declarations collected so far; ignore non-locals
+            fun record(name: String) {
+                if (declarations.any { lhsBaseIdentifierName(it.target) == name }) {
+                    reads.add(name)
+                }
+            }
+            when (node) {
+                is Statement.Compound -> throw IllegalArgumentException("collectReads must not be called on a Compound; nested scopes are handled by the caller")
+                is Expression.Identifier -> record(node.name)
+                is Expression.ValueConstructor -> record(node.constructorName)
+                else -> {}
+            }
+            traverse(::collectReads, node, reads)
+            return reads
+        }
+
+        val statements = compoundInfo.compound.statements
         for (index in statements.indices) {
             val statement = statements[index]
-            val info = DirectScopeInfo()
-            // For each statement in the compound, collect all *identifiers read* in that
-            // statement's scope, and all nested compounds to recurse into
-            collectDirectScopeInfo(statement, info)
+            if (statement is Statement.Compound) {
+                compoundInfo.childrenCompound.add(
+                    CompoundInfo(compound=statement)
+                )
+                continue
+            }
+            // For each statement (that is not a statement.compound) in the compound, collect all *identifiers read* in that statement's scope
+            collectReads(statement, mutableListOf<String>()).forEach { readName ->
+                compoundInfo.reads.add(readName to index)
+            }
             // Collect local variable declaration, and add it as a candidate if it resolves to a scalar
             if (statement is Statement.Variable) {
                 val variableType = 
@@ -238,7 +258,7 @@ internal fun findLocalVariableCandidates(
                     firstScalarLeaf(LhsExpression.Identifier(statement.name), type, 0)?.let { (target, targetType) ->
                         declarations.add(
                             LocalVariableTarget(
-                                declCompound = compound,
+                                declCompound = compoundInfo.compound,
                                 target = target,
                                 targetType = targetType,
                                 declIndex = index,
@@ -250,15 +270,17 @@ internal fun findLocalVariableCandidates(
                 // Stop walking the compound at an exit: code after it might or might not run.
                 break
             }
-            for (comp in info.nestedCompounds) {
-                walk(comp, declarations)
-            }
+        }
+        for (idx in compoundInfo.childrenCompound.indices) {
+            val comp = compoundInfo.childrenCompound[idx]
+            walk(comp, declarations)
         }
     }
 
     val declarations = mutableListOf<LocalVariableTarget>()
-    walk(body, declarations)
-    return declarations
+    val rootCompoundInfo = CompoundInfo(compound=body)
+    walk(rootCompoundInfo, declarations)
+    return rootCompoundInfo to declarations
 }
 
 // ---------- binding allocation and job rebuilding ----------
@@ -337,31 +359,6 @@ internal fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
  */
 internal fun isDisqualifyingExit(statement: Statement): Boolean =
     statement is Statement.Break || statement is Statement.Return || statement is Statement.Discard
-
-// /** True if [statement] reads [name]. */
-// internal fun statementReadsIdentifier(
-//     statement: Statement,
-//     name: String,
-// ): Boolean {
-//     for (node in nodesPreOrder(statement)) {
-//         if (node is Expression.Identifier && node.name == name) return true
-//         // For compound assignment (self-referential) statements, the lhs is also considered a read
-//         if (node is Statement.Assignment && node.assignmentOperator != AssignmentOperator.EQUAL) {
-//             val lhsName = lhsBaseIdentifierName(node.lhsExpression)
-//             if (lhsName == name) return true
-//         }
-//     }
-//     return false
-// }
-
-// /**
-//  * True if [expr] contains a genuine read of [name] (an Expression.Identifier) as opposed to an
-//  * Lhs value (which could be a write).
-//  */
-// internal fun expressionReadsIdentifier(
-//     expr: Expression,
-//     name: String,
-// ): Boolean = nodesPreOrder(expr).any { it is Expression.Identifier && it.name == name }
 
 internal fun zeroIndex(): Expression = Expression.IntLiteral("0i")
 
