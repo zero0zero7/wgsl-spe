@@ -75,7 +75,7 @@ internal fun applyV2(
         // Pick a random target and two random indices, keeping both after the declaration when
         // the target is declared in this scope.
         val target = fuzzerSettings.randomElement(qualifiedTargets)
-        val perturbation = choosePerturbation(fuzzerSettings, target.targetType)
+        val perturbation = choosePerturbation(fuzzerSettings, context, target.targetType)
         if (perturbation == null) {
             // No template applies to this scalar type (floats, while they are deferred). 
             // Recurse into nested scopes but inject nothing here.
@@ -161,7 +161,8 @@ internal fun applyV2(
                     lidExpr = lidExpr,
                     parameters = parameters,
                     counterName = null, // v2 hijacks an existing var
-                    opaqueI32 = { Expression.MemberLookup(Expression.Identifier(inputBuffer.name), V2_STRUCT_MEMBER) },
+                    opaqueThreadExpr = { Expression.MemberLookup(Expression.Identifier(inputBuffer.name), V2_STRUCT_MEMBER) },
+                    hiddenConstant = { member -> Expression.MemberLookup(Expression.Identifier(inputBuffer.name), member) },
                 )
 
             // Recursively, starting from the outermost scope ie. the entry point body.

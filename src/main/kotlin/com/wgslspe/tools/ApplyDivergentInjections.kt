@@ -229,10 +229,11 @@ private fun writeAugmentedInputs(
     val (group, binding) = added.first()
 
     val base = Json.parseToJsonElement(File(baseInputsPath).readText()).jsonObject
-    val bytes = JsonArray(intToLittleEndianBytes(threadToRun).map { JsonPrimitive(it) })
+    val blob = divergentInputBytes(threadToRun)
+    val bytes = JsonArray(blob.map { JsonPrimitive(it) })
     val augmented = JsonObject(base + ("$group:$binding" to bytes))
     File(outInputsPath).writeText(augmented.toString())
-    println("Wrote $outInputsPath (added ${threadToRun}i at $group:$binding)")
+    println("Wrote $outInputsPath (thread ${threadToRun}u + hidden constants, ${blob.size} bytes, at $group:$binding)")
 }
 
 private fun storageReadBindings(job: ShaderJob): Set<Pair<Int, Int>> =
@@ -278,3 +279,30 @@ private class ThreadToRunSettings(
 ) : FuzzerSettings by delegate {
     override fun threadToRun(): Int = threadToRun
 }
+
+// Byte image of the injected input struct (see dataStruct in DivergentAst.kt): the thread selector
+// followed by zero/one/min/max for i32, u32 and f32.
+//
+// Every member is a 4-byte scalar and so 4-byte aligned, which means no padding anywhere and a
+// total size of 52 -- already a multiple of the struct's alignment. 
+// Keep this in step with HIDDEN_CONSTANT_MEMBERS: the order here is the memory layout.
+//
+// f32 min/max are -inf/+inf rather than -/+FLT_MAX, so that `min(x, max_f32)` stays the identity
+// even when x is itself infinite.
+private fun divergentInputBytes(threadToRun: Int): List<Int> =
+    intToLittleEndianBytes(threadToRun) +
+        // i32: zero, one, min, max
+        intToLittleEndianBytes(0) +
+        intToLittleEndianBytes(1) +
+        intToLittleEndianBytes(Int.MIN_VALUE) +
+        intToLittleEndianBytes(Int.MAX_VALUE) +
+        // u32: zero, one, min, max (max as the all-ones bit pattern)
+        intToLittleEndianBytes(0) +
+        intToLittleEndianBytes(1) +
+        intToLittleEndianBytes(0) +
+        intToLittleEndianBytes(-1) +
+        // f32: zero, one, -inf, +inf as IEEE-754 bit patterns
+        intToLittleEndianBytes(0x00000000) +
+        intToLittleEndianBytes(0x3F800000) +
+        intToLittleEndianBytes(0xFF800000.toInt()) +
+        intToLittleEndianBytes(0x7F800000)

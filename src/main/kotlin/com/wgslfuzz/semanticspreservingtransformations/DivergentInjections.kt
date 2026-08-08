@@ -1,6 +1,7 @@
 package com.wgslfuzz.semanticspreservingtransformations
 
 import com.wgslfuzz.core.ShaderJob
+import com.wgslfuzz.core.Type
 
 // Injects into @compute entry points pairs of statements of the form:
 //   if (<divergent condition>) { <target> = <perturb(target)>; }
@@ -80,6 +81,39 @@ internal const val V1_STRUCT_MEMBER = "data"
 
 // v2's injected input buffer uses the same struct, and so the same member name.
 internal const val V2_STRUCT_MEMBER = V1_STRUCT_MEMBER
+
+// Constants parked in the injected input buffer alongside the thread selector, so that the shader
+// reads them at runtime and no compiler can constant-fold an expression built from them.
+//
+// NOT a route from uniform to divergent: a `var<storage, read>` load is uniform under
+// WGSL's uniformity analysis, identical in every invocation. 
+// Only local_invocation_id makes an expression invocation-varying.
+internal val HIDDEN_CONSTANT_MEMBERS: List<Pair<String, HiddenScalar>> =
+    listOf("i32", "u32", "f32").flatMap { suffix ->
+        listOf("zero", "one", "min", "max").map { kind ->
+            "${kind}_$suffix" to HiddenScalar(kind, suffix)
+        }
+    }
+
+/** Identifies one member of the hidden-constant block: eg. ("min", "i32") -> `min_i32`. */
+internal data class HiddenScalar(
+    val kind: String,
+    val suffix: String,
+) {
+    val memberName: String get() = "${kind}_$suffix"
+}
+
+/** The hidden-constant member holding [kind] for [type], or null for a type with no entry (f16). */
+internal fun hiddenMemberFor(
+    kind: String,
+    type: Type.Scalar,
+): String? =
+    when (type) {
+        Type.I32 -> "${kind}_i32"
+        Type.U32 -> "${kind}_u32"
+        Type.F32 -> "${kind}_f32"
+        else -> null
+    }
 
 fun addDivergentInjectionsV0(
     shaderJob: ShaderJob,

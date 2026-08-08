@@ -32,7 +32,7 @@ private fun createDivergentCounterPair(
     context: EntryPointContext,
 ): List<Statement> {
     // The counter is declared u32 by counterInstance, so the perturbation operand must be u32 too.
-    val perturbation = choosePerturbation(fuzzerSettings, Type.U32) ?: return emptyList()
+    val perturbation = choosePerturbation(fuzzerSettings, context, Type.U32) ?: return emptyList()
     val guards = chooseConditionTemplate(fuzzerSettings, context)
     val id = fuzzerSettings.getUniqueId() // one id per pair, so the reducer deletes both or neither
     val target = context.counter()
@@ -221,7 +221,7 @@ internal fun applyV0(
                     lidExpr = lidExpr,
                     parameters = parameters,
                     counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}",
-                    opaqueI32 = null, // v0 injects no input buffer
+                    opaqueThreadExpr = null, // v0 injects no input buffer
                 )
             val counterWrite = createCounterOverwrite(shaderJob, context)
             val body = buildInjectedBody(fuzzerSettings, context, decl.body, injections, counterWrite)
@@ -253,7 +253,8 @@ internal fun applyV1(
                     lidExpr = lidExpr,
                     parameters = parameters,
                     counterName = "divergent_counter_${fuzzerSettings.getUniqueId()}",
-                    opaqueI32 = { Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER) }, // single thread selected to run
+                    opaqueThreadExpr = { Expression.MemberLookup(Expression.Identifier(inputInstance.name), V1_STRUCT_MEMBER) }, // single thread selected to run
+                    hiddenConstant = { member -> Expression.MemberLookup(Expression.Identifier(inputInstance.name), member) },
                 )
 
             val counterWrite = createCounterWrite(context, outputBufferName = outputInstance.name)

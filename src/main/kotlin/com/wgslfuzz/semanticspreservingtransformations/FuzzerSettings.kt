@@ -106,8 +106,11 @@ interface FuzzerSettings {
 
     // How an injected pair modifies its target. See DivergentPerturbations.kt.
     // One field for now; each deferred template (MulOdd, XorMask, BitwiseNot, RotateU32) adds one.
+    // TODO
     data class DivergentPerturbationWeights(
         val addSub: Int = 1,
+        // i32/f32 always; u32 only when the hidden zero is available (v1/v2, not v0).
+        val negate: Int = 1,
     )
 
     val divergentPerturbationWeights: DivergentPerturbationWeights
@@ -248,6 +251,13 @@ interface FuzzerSettings {
      * agree -- see ApplyDivergentInjections' --threadToRun. 
      */
     fun threadToRun(): Int = DEFAULT_THREAD_TO_RUN
+
+    /**
+     * Whether a Negate perturbation spells its two halves differently (`-x` then `zero - x`)
+     * rather than identically (`-x` twice). Identical is the default; distinct is harder for a
+     * compiler to cancel by syntactic matching.
+     */
+    fun negateWithDistinctSpellings(): Boolean = false
 }
 
 // Seed used when a caller does not supply its own generator, so that an unseeded

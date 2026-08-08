@@ -44,7 +44,12 @@ internal class EntryPointContext(
      * Reads a runtime i32 that no compiler can constant-fold (v1/v2's `thread_to_run.data`).
      * Null for v0, which injects no input buffer. Each call must return a FRESH expression.
      */
-    private val opaqueI32: (() -> Expression)? = null,
+    private val opaqueThreadExpr: (() -> Expression)? = null,
+    /**
+     * Reads one member of the injected input buffer's hidden-constant block by name, or null when
+     * this entry point has no such buffer (v0). Each call must return a FRESH expression.
+     */
+    private val hiddenConstant: ((String) -> Expression)? = null,
 ) {
     /** Fresh clone every time; the stored node is never handed out, so no AST node is shared. */
     fun lid(): Expression = lidExpr.clone()
@@ -55,7 +60,22 @@ internal class EntryPointContext(
     fun counterExpr(): Expression =
         Expression.Identifier(requireNotNull(counterName) { "this entry point has no synthesised counter" })
 
-    fun opaque(): Expression? = opaqueI32?.invoke()
+    fun opaque(): Expression? = opaqueThreadExpr?.invoke()
+
+    /**
+     * `<input>.<kind>_<type>`, eg. `thread_to_run.zero_u32`. Null when this entry point has no
+     * injected input buffer, or when [type] has no hidden-constant member (f16).
+     *
+     * Uniform: a `var<storage, read>` load is the same in every invocation. It
+     * defeats constant folding, nothing more.
+     */
+    fun hidden(
+        kind: String, // min/zero/one/max
+        type: Type.Scalar,
+    ): Expression? {
+        val member = hiddenMemberFor(kind, type) ?: return null
+        return hiddenConstant?.invoke(member)
+    }
 }
 
 // ---------- locating local_invocation_id ----------
@@ -179,11 +199,11 @@ internal fun collectDirectScopeInfo(
             return
         }
         // TODO: identifier collection for DirectScopeInfo.readNames, see above
-        is Expression.Identifier -> info.readNames.add(node.name)
-        is Statement.Assignment ->
-            if (node.assignmentOperator != AssignmentOperator.EQUAL) {
-                lhsBaseIdentifierName(node.lhsExpression)?.let { info.readNames.add(it) }
-            }
+        // is Expression.Identifier -> info.readNames.add(node.name)
+        // is Statement.Assignment ->
+        //     if (node.assignmentOperator != AssignmentOperator.EQUAL) {
+        //         lhsBaseIdentifierName(node.lhsExpression)?.let { info.readNames.add(it) }
+        //     }
         else -> {}
     }
     traverse(::collectDirectScopeInfo, node, info)

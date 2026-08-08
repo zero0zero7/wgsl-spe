@@ -26,14 +26,25 @@ import com.wgslfuzz.core.TypeDecl
  */
 internal fun dataStruct(id: Int = -1): GlobalDecl.Struct =
     GlobalDecl.Struct(
-        name = if (id >= 0) "DynamicData_$id" else "DynamicData",
+        name = if (id >= 0) "DivergentInput_$id" else "DivergentInput",
         members =
             listOf(
-                StructMember(
-                    name = V1_STRUCT_MEMBER,
-                    typeDecl = TypeDecl.U32(),
-                ),
-            ),
+                // The thread the single-thread gate admits ie. the only thread to run.
+                StructMember(name = V1_STRUCT_MEMBER, typeDecl = TypeDecl.U32()),
+            ) +
+                // zero/one/min/max for i32, u32 and f32, read at runtime so that an expression
+                // built from them cannot be constant-folded.
+                HIDDEN_CONSTANT_MEMBERS.map { (name, scalar) ->
+                    StructMember(
+                        name = name,
+                        typeDecl =
+                            when (scalar.suffix) {
+                                "i32" -> TypeDecl.I32()
+                                "u32" -> TypeDecl.U32()
+                                else -> TypeDecl.F32()
+                            },
+                    )
+                },
     )
 
 /**
