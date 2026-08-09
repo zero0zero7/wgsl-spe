@@ -68,7 +68,7 @@ fun main(args: Array<String>) {
             ArgType.Int,
             fullName = "divergenceVersion",
             shortName = "dv",
-            description = "Which addDivergentInjections variant to apply: 0 or 1. Required when --injectDivergence is set.",
+            description = "Which addDivergentInjections variant to apply: 0, 1 or 2. Required when --injectDivergence is set.",
         )
 
     val inputsFilePath by parser
@@ -117,11 +117,11 @@ fun main(args: Array<String>) {
     }
 
     if (injectDivergence && divergenceVersion == null) {
-        System.err.println("--divergenceVersion is required when --injectDivergence is set (0 or 1).")
+        System.err.println("--divergenceVersion is required when --injectDivergence is set (0, 1 or 2).")
         exitProcess(1)
     }
     if (divergenceVersion != null && divergenceVersion !in 0..2) {
-        System.err.println("--divergenceVersion must be 0 or 1 or 2, got $divergenceVersion")
+        System.err.println("--divergenceVersion must be 0, 1 or 2, got $divergenceVersion")
         exitProcess(1)
     }
     if (injectDivergence && divergenceVersion == 1 && inputsFilePath == null) {
