@@ -182,6 +182,28 @@ internal class CompoundInfo (
 ) {
     val reads = mutableListOf<Pair<String, Int>>() // Each pair is identifierName, index of read in CURRENT compound
     val childrenCompound = mutableListOf<CompoundInfo>()
+    /**
+     * Index of the first disqualifying exit among this compound's OWN statements, or null. 
+     * Everything from [exitIndex] onwards is ignored since that code might or might not run.
+     *  -- no declaration there is a candidate, no read there is recorded, and no injection may be placed there -- 
+     */
+    var exitIndex: Int? = null
+}
+
+/**
+ * Every scope in the tree rooted at this one, keyed by its compound. [Statement.Compound] is a plain
+ * class, so lookup is by identity -- the same assumption applyV2's `injections` map already makes.
+ * A compound ABSENT from this map is one the walk deliberately did not analyse, because it sits
+ * after a disqualifying exit, and so must not be injected into.
+ */
+internal fun CompoundInfo.scopesByCompound(): Map<Statement.Compound, CompoundInfo> {
+    val result = mutableMapOf<Statement.Compound, CompoundInfo>()
+    fun collect(info: CompoundInfo) {
+        result[info.compound] = info
+        info.childrenCompound.forEach(::collect)
+    }
+    collect(this)
+    return result
 }
 
 
@@ -202,85 +224,106 @@ internal class CompoundInfo (
 /**
  * For v2. Walks [body], treating every Statement.Compound as a lexical scope, and finds all local
  * `var` declarations that resolve to a scalar via [firstScalarLeaf], including those in nested scopes.
+ *
+ * Returns the root [CompoundInfo] -- the scope tree, carrying each scope's reads, exit index and
+ * child scopes -- along with the flat list of candidates found anywhere within it.
  */
 internal fun findLocalVariableCandidates(
     shaderJob: ShaderJob,
     body: Statement.Compound,
 ): Pair<CompoundInfo, List<LocalVariableTarget>> {
+    /**
+     * Splits one statement into the part belonging to the enclosing scope and the parts that open a new one:
+     * - [onRead] fires for every identifier read in the statement's own scope,
+     * - [onNestedCompound] fires, in source order, for every compound the statement introduces -- a bare block, an if branch, a loop body, a switch clause body.
+     *
+     * Recursion stops at each nested compound, whose contents belong to that compound's own scope. 
+     * A control-flow header is not a new scope, so reads in an `if` condition or a `for`'s init/condition/update are attributed to the enclosing scope, at the index of the control-flow statement itself.
+     */
+    fun splitStatement(
+        node: AstNode,
+        onRead: (String) -> Unit,
+        onNestedCompound: (Statement.Compound) -> Unit,
+    ) {
+        if (node is Statement.Compound) {
+            onNestedCompound(node)
+            // Don't descend into the nested compound's statements: they belong to a new scope, and will be walked separately by the caller.
+            return
+        }
+        // Only an identifier is a read.
+        // Does capture reads in control-flow headers, which are part of the enclosing scope, at the index of the control-flow statement itself.
+        // Eg. if (a==3i){ ... }  -- the read of `a` is attributed to the enclosing scope, at the index of the `if` statement; the body is a nested compound, and will be walked separately by the caller.
+        if (node is Expression.Identifier) {
+            onRead(node.name)
+        }
+        traverse({ child, _ -> splitStatement(child, onRead, onNestedCompound) }, node, Unit) // This traversal is limited to the starting [node] which is a statement, won't descend into siblings.
+    }
+
     // Cannot use `traverse()` alone as we want to capture the INDEX of the line in the Statement.Compound
     fun walk(
         compoundInfo: CompoundInfo,
-        declarations: MutableList<LocalVariableTarget>,
+        inScopeVariables: MutableList<LocalVariableTarget>, // declarations visible here; truncated on scope exit
+        candidates: MutableList<LocalVariableTarget>, // every candidate found anywhere; append-only
     ) {
-        /** Helper function to collect reads of variables that have been declared
-         * Not a standalone function as it requires knowledge of declared vars
-         */
-        fun collectReads(
-            node: AstNode,
-            reads: MutableList<String>, // Names of local variables read in given compound, given index ie. specific statement in compound
-        ): List<String> {
-            // A read must name one of the declarations collected so far; ignore non-locals
-            fun record(name: String) {
-                if (declarations.any { lhsBaseIdentifierName(it.target) == name }) {
-                    reads.add(name)
-                }
-            }
-            when (node) {
-                is Statement.Compound -> throw IllegalArgumentException("collectReads must not be called on a Compound; nested scopes are handled by the caller")
-                is Expression.Identifier -> record(node.name)
-                is Expression.ValueConstructor -> record(node.constructorName)
-                else -> {}
-            }
-            traverse(::collectReads, node, reads)
-            return reads
-        }
-
+        val inScopeOnEntry = inScopeVariables.size
         val statements = compoundInfo.compound.statements
         for (index in statements.indices) {
-            val statement = statements[index]
-            if (statement is Statement.Compound) {
-                compoundInfo.childrenCompound.add(
-                    CompoundInfo(compound=statement)
-                )
-                continue
-            }
-            // For each statement (that is not a statement.compound) in the compound, collect all *identifiers read* in that statement's scope
-            collectReads(statement, mutableListOf<String>()).forEach { readName ->
-                compoundInfo.reads.add(readName to index)
-            }
-            // Collect local variable declaration, and add it as a candidate if it resolves to a scalar
+            val statement = statements[index] 
+            val nested = mutableListOf<CompoundInfo>()
+            // Current statement: collect if it is a read, and collect if it is nested compounds but only walk it, else nothing happens.
+            splitStatement(
+                statement,
+                onRead = { name ->
+                    // A read must name one of the declarations in scope here (include those inherited from parent scope). Parent's sibling scope's declarations are not in scope here, so they are ignored as planned. 
+                    if (inScopeVariables.any { lhsBaseIdentifierName(it.target) == name }) {
+                        compoundInfo.reads.add(name to index)
+                    }
+                },
+                onNestedCompound = { nested.add(CompoundInfo(compound = it)) },
+            )
+            compoundInfo.childrenCompound.addAll(nested)
+            nested.forEach { walk(it, inScopeVariables, candidates) } 
+
+            // Collect local variable declaration, and add it as a candidate if it resolves to a scalar.
+            // Only declarations that are itself an element of the compound's OWN statements are considered. 
+            // Specifically. a `var` declared in a for-loop header is a Statement.Variable, but this Statement.Variable is not in compoundInfo.compound.statements[idx], so it is not considered a candidate for injection at all. TODO
             if (statement is Statement.Variable) {
-                val variableType = 
+                val variableType =
                     statement.typeDecl?.toType(shaderJob.environment.globalScope, shaderJob.environment) // Variable type explicitly declared
                         ?: statement.initializer?.let { shaderJob.environment.typeOf(it).asStoreTypeIfReference() } // If not, infer from initializer
                 // Extract numeric scalar leaf of variable using the type
                 variableType?.let { type ->
                     firstScalarLeaf(LhsExpression.Identifier(statement.name), type, 0)?.let { (target, targetType) ->
-                        declarations.add(
+                        val candidate =
                             LocalVariableTarget(
                                 declCompound = compoundInfo.compound,
                                 target = target,
                                 targetType = targetType,
                                 declIndex = index,
-                            ),
-                        )
+                            )
+                        candidates.add(candidate)
+                        inScopeVariables.add(candidate)
                     }
                 }
             } else if (isDisqualifyingExit(statement)) {
-                // Stop walking the compound at an exit: code after it might or might not run.
+                // Stop looking at this compound entirely: code from here on might or might not run.
+                // Nothing beyond this point is a candidate or a read, applyV2 must not inject past
+                // this index, and a compound out here gets no CompoundInfo at all -- so applyV2's
+                // scope lookup misses it and leaves it alone.
+                compoundInfo.exitIndex = index
                 break
             }
         }
-        for (idx in compoundInfo.childrenCompound.indices) {
-            val comp = compoundInfo.childrenCompound[idx]
-            walk(comp, declarations)
-        }
+
+        // Leaving the scope/compound: its declarations are no longer visible to any sibling scope/compound.
+        inScopeVariables.subList(inScopeOnEntry, inScopeVariables.size).clear() // removes all ele from inScopeOnEntry to end of list
     }
 
-    val declarations = mutableListOf<LocalVariableTarget>()
-    val rootCompoundInfo = CompoundInfo(compound=body)
-    walk(rootCompoundInfo, declarations)
-    return rootCompoundInfo to declarations
+    val candidates = mutableListOf<LocalVariableTarget>()
+    val rootCompoundInfo = CompoundInfo(compound = body)
+    walk(rootCompoundInfo, mutableListOf(), candidates)
+    // `candidates` returns the complete list of all local variables in the entry point. (unlike `inScopeVariables` which only looks at current scope and its ancestors)
+    return rootCompoundInfo to candidates
 }
 
 // ---------- binding allocation and job rebuilding ----------
@@ -358,7 +401,7 @@ internal fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
  * actually observed by a stale read.
  */
 internal fun isDisqualifyingExit(statement: Statement): Boolean =
-    statement is Statement.Break || statement is Statement.Return || statement is Statement.Discard
+    statement is Statement.Break || statement is Statement.Return || statement is Statement.Discard || statement is Statement.Continue
 
 internal fun zeroIndex(): Expression = Expression.IntLiteral("0i")
 

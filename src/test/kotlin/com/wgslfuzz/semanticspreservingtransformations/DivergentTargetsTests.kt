@@ -1,19 +1,3 @@
-/*
- * Copyright 2025 The wgsl-fuzz Project Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.wgslfuzz.semanticspreservingtransformations
 
 import com.wgslfuzz.core.Attribute
@@ -22,35 +6,27 @@ import com.wgslfuzz.core.ShaderJob
 import com.wgslfuzz.core.Statement
 import com.wgslfuzz.core.createShaderJob
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * Unit tests for [findLocalVariableCandidates], the v2 scope walk that DivergentLocalInjection's
- * `applyV2` depends on. Rather than going through `applyV2` and diffing emitted WGSL, these call
- * the walk directly (it is `internal`, and tests share its package) and assert on the three things
- * it produces for a sample @compute body.
+ * Unit tests for [findLocalVariableCandidates], the v2 scope walk that [DivergentLocalInjection] depends on.
  *
  * The intended semantics being pinned here are:
  *
- *  1. **candidates / declarations** -- one [LocalVariableTarget] per function-scope `var` in any
- *     scope whose type has a scalar leaf, carrying the [Statement.Compound] it was declared in and
- *     its statement index within that compound. A `var` in a `for` header is *not* a candidate: it
- *     is scoped to the loop, not to any compound, so there is no compound index to record.
- *  2. **childrenCompound** -- one child [CompoundInfo] per nested compound reachable from this
- *     scope's statements, in source order. This includes control-flow bodies (`if` then/else
- *     branches, `for`/`while`/`loop` bodies, switch clause bodies), not just bare `{ ... }` blocks.
- *  3. **reads** -- `(name, statementIndex)` for each read of a tracked local appearing in this
- *     scope's *own* statements, excluding anything inside a nested child compound, which owns its
- *     own reads. A read in a control-flow *header* (an `if` condition, a `for` condition) belongs
- *     to the enclosing scope, at the index of the control-flow statement. An assignment *target*
- *     is a write, not a read, so it is not recorded.
- *
- * Point 3 is what [applyV2] consumes: it takes the minimum index over the reads of the chosen
- * target to decide how late the restore statement may be injected.
- *
- * Reads are compared as distinct sets throughout, so that whether `x = x + x` records one entry or
- * two stays an open decision -- `applyV2` only ever takes a minimum over them, so duplicates carry
- * no information either way.
+ *  1. **candidates / declarations** 
+ *  One [LocalVariableTarget] per function-scope `var` in any scope whose type has a scalar leaf
+ *  Carries the [Statement.Compound] it was declared in and its statement index within that compound. 
+ *  A `var` in a `for` header is *not* a candidate: it is scoped to the loop, not to any compound, so there is no compound index to record.
+ *  2. **childrenCompound** 
+ *  One child [CompoundInfo] per nested compound reachable from this scope's statements, in source order.
+ *  Includes control-flow bodies (`if` then/else branches, `for`/`while`/`loop` bodies, switch clause bodies), not just bare `{ ... }` blocks.
+ *  3. **reads**
+ *  `(name, statementIndex)` for each read of a tracked local appearing in this scope's *own* statements,
+ *  Excludes anything inside a nested child compound, which owns its own reads. 
+ *  A read in a control-flow *header* (an `if` condition, a `for` condition) belongs to the enclosing scope, at the index of the control-flow statement. 
+ *  An assignment *target* is a write, not a read, so it is not recorded.
  */
 class DivergentTargetsTests {
     private fun computeBody(shaderText: String): Pair<ShaderJob, Statement.Compound> {
@@ -81,8 +57,13 @@ class DivergentTargetsTests {
 
     /**
      * Root statement indices:
-     *   0 var a, 1 var s, 2 var v, 3 `a = a + 1`, 4 bare block, 5 if/else, 6 for, 7 `a = a + 1`
-     * Child scopes, in source order: bare block, if-then, if-else, for body.
+     *   0 var a, 1 var s, 2 var v, 3 `let d`, 4 `a = a + 1`, 5 bare block, 6 if/else, 7 for,
+     *   8 `a = a + 1`
+     * Root child scopes, in source order: bare block, if-then, if-else, for body.
+     *
+     * The if-then branch nests one level deeper: its statements are `0 var c`, `1 for`, `2 s.x = c`,
+     * and the for body is its only child. That for reads `a` in its header -- which belongs to the
+     * if-then branch, at the for's index 1 -- and `c` in its body.
      */
     private val nestedScopes =
         """
@@ -96,6 +77,7 @@ class DivergentTargetsTests {
           var a: i32 = 1;
           var s: S;
           var v: vec4<f32>;
+          let d: i32 = 1;
           a = a + 1;
           {
             var b: i32 = a;
@@ -103,6 +85,9 @@ class DivergentTargetsTests {
           }
           if (a > 0) {
             var c: i32 = 2;
+            for (var i: i32 = 0; i < a; i = i + 1) {
+              c = c + 1;
+            }
             s.x = c;
           } else {
             a = 3;
@@ -123,6 +108,7 @@ class DivergentTargetsTests {
                 Triple("a", 0, "I32"),
                 Triple("s", 1, "I32"), // first scalar leaf of S is member x
                 Triple("v", 2, "F32"), // first scalar leaf of vec4<f32> is element 0
+                // `d` should not be present since it is a let, not a var
                 // declared in nested scopes
                 Triple("b", 0, "I32"), // bare block
                 Triple("c", 0, "I32"), // if-then branch
@@ -136,7 +122,21 @@ class DivergentTargetsTests {
         val (root, candidates) = walk(nestedScopes)
         val byName = candidates.associateBy { lhsBaseIdentifierName(it.target) }
 
-        assertEquals(root.compound, byName["a"]!!.declCompound, "a is declared in the entry point body")
+        assertEquals(
+            root.compound, 
+            byName["a"]!!.declCompound, 
+            "a is declared in the entry point body"
+        )
+        assertEquals(
+            root.compound, 
+            byName["s"]!!.declCompound, 
+            "s is declared in the entry point body"
+        )
+        assertEquals(
+            root.compound, 
+            byName["v"]!!.declCompound, 
+            "v is declared in the entry point body"
+        )
         assertEquals(
             descend(root, 0).compound,
             byName["b"]!!.declCompound,
@@ -167,6 +167,17 @@ class DivergentTargetsTests {
             root.childrenCompound.size,
             "expected: bare block, if-then branch, if-else branch, for body",
         )
+        // ---- nested scopes ----
+        assertEquals(
+            listOf(0, 1, 0, 0),
+            root.childrenCompound.map { it.childrenCompound.size },
+            "only the if-then branch has a child of its own: the for body nested inside it",
+        )
+        assertEquals(
+            (descend(root, 1).compound.statements[1] as Statement.For).body,
+            descend(root, 1, 0).compound,
+            "the if-then branch's only child is the body of the for at its statement 1",
+        )
     }
 
     @Test
@@ -182,14 +193,14 @@ class DivergentTargetsTests {
     }
 
     @Test
-    fun `reads record the name and the index of the reading statement`() {
+    fun `reads records the name and the index of the reading statement`() {
         val (root, _) = walk(nestedScopes)
         assertEquals(
             setOf(
-                "a" to 3, // a = a + 1
-                "a" to 5, // if (a > 0)      -- header read, belongs to this scope
-                "a" to 6, // for (...; i < a; ...)
-                "a" to 7, // a = a + 1
+                "a" to 4, // a = a + 1        -- `let d` at 3 reads nothing, but still takes an index
+                "a" to 6, // if (a > 0)       -- header read, belongs to this scope
+                "a" to 7, // for (...; i < a; ...)
+                "a" to 8, // a = a + 1
             ),
             readsOf(root),
             "reads inside nested scopes must not leak into the enclosing scope",
@@ -200,9 +211,18 @@ class DivergentTargetsTests {
     fun `each nested scope owns its own reads`() {
         val (root, _) = walk(nestedScopes)
         assertEquals(setOf("a" to 0, "b" to 1), readsOf(descend(root, 0)), "bare block")
-        assertEquals(setOf("c" to 1), readsOf(descend(root, 1)), "if-then branch")
+        assertEquals(
+            setOf("a" to 1, "c" to 2), // `for (...; i < a; ...)` header, then `s.x = c`
+            readsOf(descend(root, 1)),
+            "if-then branch: the nested for's header read belongs here, at the for's own index",
+        )
         assertEquals(emptySet<Pair<String, Int>>(), readsOf(descend(root, 2)), "if-else branch: `a = 3` writes a")
         assertEquals(setOf("v" to 0, "a" to 0), readsOf(descend(root, 3)), "for body")
+        assertEquals(
+            setOf("c" to 0), // `c = c + 1`
+            readsOf(descend(root, 1, 0)),
+            "the for body nested in the if-then branch owns only its own read of c",
+        )
     }
 
     @Test
@@ -250,9 +270,8 @@ class DivergentTargetsTests {
     }
 
     /**
-     * The walk stops at a disqualifying exit ([isDisqualifyingExit]), because statements after it
-     * may or may not run. `q` is declared before the `return` and is a candidate; `r` is declared
-     * after it and must not be.
+     * Everything at or after a disqualifying exit ([isDisqualifyingExit]) is ignored.
+     * `0 var q`, `1 return`, `2 var r`, `3 p = p + r`, `4 { var w ... }`.
      */
     private val earlyExit =
         """
@@ -263,18 +282,243 @@ class DivergentTargetsTests {
             var q: i32 = 2;
             return;
             var r: i32 = 3;
+            p = p + r;
+            {
+              var w: i32 = 4;
+            }
           }
           p = p + 1;
         }
         """.trimIndent()
 
     @Test
-    fun `the walk stops at a return`() {
+    fun `a declaration after an exit is not a candidate`() {
         val (_, candidates) = walk(earlyExit)
         assertEquals(
             listOf("p", "q"),
             candidates.map { lhsBaseIdentifierName(it.target) },
-            "r is declared after the return, so it must not be a candidate",
+            "r and w are declared after the return, so they must not be a candidate",
+        )
+    }
+
+    @Test
+    fun `a read after an exit is not recorded`() {
+        val (root, _) = walk(earlyExit)
+        assertEquals(
+            emptySet<Pair<String, Int>>(),
+            readsOf(descend(root, 0)),
+            "`p = p + r` sits after the return, so it must not constrain injection in this scope",
+        )
+    }
+
+    /**
+     * A compound after an exit is never analysed, so it gets no [CompoundInfo] and is missing from
+     * [scopesByCompound]. That absence is what stops applyV2 instrumenting it: its clone callback
+     * looks the compound up, misses, and copies the statement unchanged.
+     */
+    @Test
+    fun `a compound after an exit gets no scope at all`() {
+        val (shaderJob, body) = computeBody(earlyExit)
+        val thenBranch = (body.statements[1] as Statement.If).thenBranch
+        val blockAfterExit = thenBranch.statements[4] as Statement.Compound
+
+        val (root, _) = findLocalVariableCandidates(shaderJob, body)
+        val scopes = root.scopesByCompound()
+
+        assertTrue(thenBranch in scopes, "the then-branch itself is analysed, up to the return")
+        assertFalse(blockAfterExit in scopes, "the block after the return must have no scope")
+        assertEquals(
+            emptyList<CompoundInfo>(),
+            root.childrenCompound[0].childrenCompound,
+            "the then-branch registers no children, since its only nested block sits after the exit",
+        )
+    }
+
+    @Test
+    fun `the scope containing an exit records its index`() {
+        val (root, _) = walk(earlyExit)
+        assertEquals(1, descend(root, 0).exitIndex, "the return is statement 1 of the then-branch")
+        assertEquals(null, root.exitIndex, "the entry point body itself has no exit")
+        assertEquals(
+            null,
+            descend(walk(nestedScopes).first, 0).exitIndex,
+            "a scope with no exit records none",
+        )
+    }
+
+    /**
+     * `nestedScopes` covers bare blocks, if-then, if-else and a `for` body. 
+     * `controlFlow` covers the rest of the ways a [Statement.Compound] can be introduced,
+     *  each of which `splitStatement` reaches through a different arm of [traverse]:
+     *  a `while` body, a `loop` body, a `continuing` block, switch clause bodies, `else if` chain.
+     *
+     * None of these statements IS a Compound -- `While`, `Loop`, `Switch` and `If` are sibling
+     * subtypes of [Statement] -- so `splitStatement` falls through to `traverse` and picks their
+     * bodies up one level down. WGSL has no single-statement bodies, so every one of these fields
+     * is typed Compound and is therefore unconditionally a scope.
+     *
+     * Root statement indices:
+     *   0 var a, 1 var b, 2 while, 3 loop, 4 switch, 5 if/else-if/else
+     */
+    private val controlFlow =
+        """
+        @compute @workgroup_size(1)
+        fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+          var a: i32 = 1;
+          var b: i32 = 2;
+          while (a < 10) {
+            var c: i32 = a;
+            a = a + c;
+          }
+          loop {
+            b = b + 1;
+            continuing {
+              b = b + 1;
+              break if (b > 5);
+            }
+          }
+          switch (a) {
+            case 0: {
+              var e: i32 = 1;
+              b = e;
+            }
+            default: {
+              b = a;
+            }
+          }
+          if (a > 0) {
+            if (a == 1) {
+              a = 0;
+            }
+            a = 1;
+          } else if (b > 0) {
+            b = 1;
+          } else {
+            a = 2;
+          }
+        }
+        """.trimIndent()
+
+    @Test
+    fun `every control flow form contributes its body as a child scope`() {
+        val (root, _) = walk(controlFlow)
+        assertEquals(
+            8,
+            root.childrenCompound.size,
+            "expected: while body, loop body, continuing block, case clause, default clause, " +
+                "if-then, else-if-then, else",
+            // splitStatement traverses:
+            // - Statement.Loop, capturing .body and .continuingStatement.statements as compounds.
+            // - Statement.Switch, capturing each clause's .compoundStatement as a compound.
+            // - Statement.If, capturing .thenBranch, and recursing through .elseBranch -- which is
+            //   itself a Statement.If for an `else if`, so the whole chain flattens to siblings.
+            //
+            // The nested `if (a == 1) { ... }` is NOT a root child: it lives inside .thenBranch which is a Statement.Compound
+            // It is reached only when walk() recurses into that scope, so it lands at descend(root, 5, 0). 
+        )
+    }
+
+    @Test
+    fun `a while body is a scope that owns its reads and declarations`() {
+        val (root, candidates) = walk(controlFlow)
+        val c = candidates.single { lhsBaseIdentifierName(it.target) == "c" }
+
+        assertEquals(descend(root, 0).compound, c.declCompound, "c is declared in the while body")
+        assertEquals(
+            setOf("a" to 0, "a" to 1, "c" to 1), // `var c = a;` then `a = a + c;`
+            readsOf(descend(root, 0)),
+            "the while body owns these; only the `a < 10` header read belongs to the enclosing scope",
+        )
+    }
+
+    @Test
+    fun `a loop contributes both its body and its continuing block`() {
+        val (root, _) = walk(controlFlow)
+        // traverse visits Loop.body before Loop.continuingStatement,
+        // Loop.ContinuingStatement.statements is itself a Compound, so the continuing block is a scope in its own right.
+        assertEquals(setOf("b" to 0), readsOf(descend(root, 1)), "loop body: `b = b + 1`")
+        assertEquals(setOf("b" to 0), readsOf(descend(root, 2)), "continuing block: `b = b + 1`")
+    }
+
+    @Test
+    fun `switch clause bodies are scopes and their declarations are candidates`() {
+        val (root, candidates) = walk(controlFlow)
+        val e = candidates.single { lhsBaseIdentifierName(it.target) == "e" }
+
+        assertEquals(descend(root, 3).compound, e.declCompound, "e is declared in the case clause")
+        assertEquals(0, e.declIndex)
+        assertEquals(setOf("e" to 1), readsOf(descend(root, 3)), "case clause: `b = e`")
+        assertEquals(setOf("a" to 0), readsOf(descend(root, 4)), "default clause: `b = a`")
+    }
+
+    @Test
+    fun `a read in a control flow header belongs to the enclosing scope`() {
+        val (root, _) = walk(controlFlow)
+        assertEquals(
+            setOf(
+                "a" to 2, // while (a < 10)
+                "b" to 3, // break if (b > 5)  -- see the break-if test below
+                "a" to 4, // switch (a)
+                "a" to 5, // if (a > 0)
+                "b" to 5, // } else if (b > 0) -- the else-if chain flattens, so still index 5
+                // `if (a == 1)` is nested INSIDE the if-then branch, so its header read is not here
+            ),
+            readsOf(root),
+            "headers are evaluated in the enclosing scope, at the control-flow statement's index",
+        )
+        // The rule applies at every depth: the nested if's condition belongs to the scope that
+        // contains the nested if -- the outer if-then branch -- at the nested if's own index there.
+        assertEquals(
+            setOf("a" to 0), // if (a == 1)   -- statement 0 of the if-then branch
+            readsOf(descend(root, 5)),
+            "the nested if's header read belongs to the branch containing it, not to the root",
+        )
+        assertEquals(
+            emptySet<Pair<String, Int>>(),
+            readsOf(descend(root, 5, 0)),
+            "`a = 0;` writes a, so the nested then-branch records no read at all",
+        )
+    }
+
+    /**
+     * `else if` is not a nested scope: [Statement.If.elseBranch] is an ElseBranch, which a
+     * [Statement.If] also implements, so splitStatement recurses straight through it. The three
+     * branch bodies come out as SIBLING children of the enclosing compound, and the else-if
+     * condition's read is attributed to the outer `if`'s statement index. That matches WGSL: an
+     * else-if condition is evaluated in the enclosing scope, not inside either branch.
+     */
+    @Test
+    fun `an else-if chain flattens into sibling scopes`() {
+        val (root, _) = walk(controlFlow)
+        assertEquals(setOf("b" to 5), readsOf(root).filter { it.first == "b" && it.second == 5 }.toSet())
+        // The three branches are siblings of each other, NOT nested one inside the next -- but a
+        // genuinely nested `if` inside a branch still nests, which is what separates "the chain is
+        // flat" from "nothing ever nests".
+        assertEquals(
+            listOf(1, 0, 0),
+            (5..7).map { descend(root, it).childrenCompound.size },
+            "the if-then branch owns the nested if's then-branch; the else-if and else are leaves",
+        )
+        assertEquals(
+            (descend(root, 5).compound.statements[0] as Statement.If).thenBranch,
+            descend(root, 5, 0).compound,
+            "that child is the then-branch of the `if (a == 1)` nested inside the outer if-then",
+        )
+    }
+
+    /**
+     * `break if` sits in [ContinuingStatement.breakIfExpr], which traverse visits as a SIBLING of
+     * the continuing block rather than inside it, so its reads land on the enclosing compound at the
+     * loop's statement index. That is imprecise but safe in the conservative direction: attributing
+     * the read outward can only shrink the enclosing scope's injection window, never widen it.
+     */
+    @Test
+    fun `a break-if read is attributed to the scope containing the loop`() {
+        val (root, _) = walk(controlFlow)
+        assertTrue("b" to 3 in readsOf(root), "the loop is statement 3 of the entry point body")
+        assertFalse(
+            readsOf(descend(root, 2)).any { it.second > 0 },
+            "the continuing block records only its own statements, not the break-if",
         )
     }
 }
