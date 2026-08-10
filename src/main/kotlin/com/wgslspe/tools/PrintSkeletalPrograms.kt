@@ -4,7 +4,7 @@ import com.wgslfuzz.core.AstNode
 import com.wgslfuzz.core.AstWriter
 import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.SourceSpan
-import com.wgslfuzz.core.createShaderJob
+import com.wgslspe.core.parseWithHardDeadline
 import com.wgslspe.core.collectSkeletalCandidates
 import com.wgslspe.core.stripAstWriterTrailingCommas
 import com.wgslspe.core.allReplacementSkeletons
@@ -142,7 +142,7 @@ fun main(args: Array<String>) {
         }
 
     val shaderText = shaderFile.readText()
-    val shaderJob = createShaderJob(shaderText, uniformBuffers, timeoutMilliseconds = parseTimeout)
+    val shaderJob = parseWithHardDeadline(shaderText, uniformBuffers, parseTimeout)
     val tu = shaderJob.tu
     val env = shaderJob.environment
 

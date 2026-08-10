@@ -8,7 +8,6 @@ import com.wgslfuzz.core.BufferInfo
 import com.wgslfuzz.core.Expression
 import com.wgslfuzz.core.GlobalDecl
 import com.wgslfuzz.core.ShaderJob
-import com.wgslfuzz.core.createShaderJob
 import com.wgslfuzz.semanticspreservingtransformations.DEFAULT_FUZZER_SEED
 import com.wgslfuzz.semanticspreservingtransformations.DEFAULT_THREAD_TO_RUN
 import com.wgslfuzz.semanticspreservingtransformations.DefaultFuzzerSettings
@@ -16,6 +15,7 @@ import com.wgslfuzz.semanticspreservingtransformations.FuzzerSettings
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV0
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV1
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV2
+import com.wgslspe.core.parseWithHardDeadline
 import com.wgslspe.core.rewriteWorkgroupSize
 import com.wgslspe.core.stripAstWriterTrailingCommas
 import kotlinx.cli.ArgParser
@@ -163,7 +163,7 @@ fun main(args: Array<String>) {
             emptyList()
         }
 
-    val shaderJob = createShaderJob(shaderText, uniformBuffers, timeoutMilliseconds = parseTimeout)
+    val shaderJob = parseWithHardDeadline(shaderText, uniformBuffers, parseTimeout)
     val fuzzerSettings: FuzzerSettings =
         ThreadToRunSettings(DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom()), threadToRun)
     val transformedShaderJob =

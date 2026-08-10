@@ -49,6 +49,24 @@ import java.util.BitSet
 private const val DEFAULT_PARSE_TIMEOUT_MILLISECONDS: Int = 10000
 
 /**
+ * Thrown when parsing exceeds its time budget, so that a caller can tell a timeout apart from a syntax error.
+ *
+ * Deliberately NOT a [ParseCancellationException]:
+ * - [parseFromString] catches that to fall back from the fast SLL parse to the slow LL parse,
+ *      so a timeout raised as one would be swallowed and the parse restarted with a fresh budget.
+ * - Message "Parsing timed out" which the fuzz/ scripts grep for to classify the failure.
+ *
+ * This timeout is only consulted between grammar rules (see [TimeoutParseTreeListener]), so it cannot
+ * interrupt a single long-running Antlr `adaptivePredict` call. 
+ * Shaders that trigger a prediction blowup -- deeply nested call arguments containing comparisons, which the ambiguous `<` in the WGSL grammar makes expensive -- therefore
+ * overshoot it. 
+ * Callers that need a hard bound must impose one themselves.
+ */
+class ParseTimeoutException(
+    message: String,
+) : RuntimeException(message)
+
+/**
  * When using Antlr for parsing an error listener should be attached to record any errors that occur. This is the
  * default error listener for the wgsl-fuzz project. If parsing fails, it can be queried for error messages.
  */
@@ -167,7 +185,7 @@ private class TimeoutParseTreeListener(
 ) : ParseTreeListener {
     private fun checkTime() {
         if (System.currentTimeMillis() > timeToStop) {
-            throw RuntimeException("Parsing timed out.")
+            throw ParseTimeoutException("Parsing timed out.")
         }
     }
 
