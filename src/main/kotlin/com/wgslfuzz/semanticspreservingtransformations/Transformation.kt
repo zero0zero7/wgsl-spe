@@ -33,7 +33,10 @@ fun initMetamorphicTransformations(
         ::addIdentityOperations,
         ::addDivergentInjectionsV0,
         ::addDivergentInjectionsV1,
-        ::addDivergentInjectionsV2,
+        // ::addDivergentInjectionsV2,
+        // V2 injection returns null when it fails to find a suitable local variable to hijack.
+        // To oadhere to List<MetamorphicTransformation> return type, wrap it to return the original shader when no injection was performed.
+        { shaderJob, fuzzerSettings -> addDivergentInjectionsV2(shaderJob, fuzzerSettings) ?: shaderJob },
         addControlFlowWrappers(transformedDonorShaderJob),
     )
 }

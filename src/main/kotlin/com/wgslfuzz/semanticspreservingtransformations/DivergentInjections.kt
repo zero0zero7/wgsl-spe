@@ -125,7 +125,8 @@ fun addDivergentInjectionsV1(
     fuzzerSettings: FuzzerSettings,
 ): ShaderJob = applyV1(shaderJob, fuzzerSettings)
 
+// Returns null if no injection was performed, so that the caller can skip the shader variant and avoid a false positive in the divergence oracle.
 fun addDivergentInjectionsV2(
     shaderJob: ShaderJob,
     fuzzerSettings: FuzzerSettings,
-): ShaderJob = applyV2(shaderJob, fuzzerSettings)
+): ShaderJob? = applyV2(shaderJob, fuzzerSettings)

@@ -30,7 +30,7 @@ private fun selectLocalVariableTargets(
 internal fun applyV2(
     shaderJob: ShaderJob,
     fuzzerSettings: FuzzerSettings,
-): ShaderJob {
+): ShaderJob? {
     val (inputBinding, _) = nextTwoBindings(shaderJob)
     val inputStruct = dataStruct(fuzzerSettings.getUniqueId())
     val inputBuffer = threadToRunInputInstance(inputBinding, inputStruct.name)
@@ -150,6 +150,7 @@ internal fun applyV2(
         return Statement.Compound(newStatements, compound.metadata)
     }
 
+    var injected = false
     val newGlobalDecls =
         mapComputeFunctions(shaderJob.tu.globalDecls) { decl ->
             val (compoundInfo, candidates) = findLocalVariableCandidates(shaderJob, decl.body)
@@ -185,7 +186,9 @@ internal fun applyV2(
                     newBody.metadata,
                 )
 
+            injected = true
             decl.withParametersAndBody(context.parameters, gatedBody)
         }
+    if (!injected) return null
     return rebuildShaderJob(shaderJob, newGlobalDecls, listOf(inputStruct, inputBuffer))
 }

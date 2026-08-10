@@ -34,6 +34,10 @@ import kotlin.random.Random
 import kotlin.random.asJavaRandom
 import kotlin.system.exitProcess
 
+// Exit status for "shader is fine but v2 has nothing to instrument" 
+// - distinct from 1 (usage / bad input errors) so the fuzz scripts can classify it as a skip rather than a tool failure.
+const val EXIT_NO_LOCAL_CANDIDATE = 3
+
 // Applies addDivergentInjections (DivergentInjections.kt) to a supplied shader, bypassing initMetamorphicTransformations' random pick over the full transformation list.
 //
 // --workgroupSize is REQUIRED whenever --injectDivergence is set.
@@ -170,7 +174,15 @@ fun main(args: Array<String>) {
         when (divergenceVersion) {
             0 -> addDivergentInjectionsV0(shaderJob, fuzzerSettings)
             1 -> addDivergentInjectionsV1(shaderJob, fuzzerSettings)
-            else -> addDivergentInjectionsV2(shaderJob, fuzzerSettings)
+            else -> 
+                addDivergentInjectionsV2(shaderJob, fuzzerSettings) ?: run {
+                    // Exit with error when v2 fails to find a suitable local variable to hijack.
+                    System.err.println(
+                        "no-local-candidate: no @compute entry point declares a function-scope " +
+                            "var for v2 to hijack; variant skipped, no output written.",
+                    )
+                    exitProcess(EXIT_NO_LOCAL_CANDIDATE)
+                }
         }
 
     val textOut = ByteArrayOutputStream()
