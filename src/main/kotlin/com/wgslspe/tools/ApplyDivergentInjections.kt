@@ -194,7 +194,7 @@ fun main(args: Array<String>) {
     // AstWriter emits trailing commas wgslsmith's own parser rejects (see stripAstWriterTrailingCommas).
     val transformedText = stripAstWriterTrailingCommas(textOut.toString("UTF-8"))
 
-    if (divergenceVersion in 1..2 && "divergent_counter_" !in transformedText) {
+    if (divergenceVersion==1 && "divergent_counter_" !in transformedText) {
         System.err.println(
             "No @compute entry point found, or no candidate site happened to be selected for " +
                 "injection (each site is an independent 50% coin flip) -- output is unchanged " +
