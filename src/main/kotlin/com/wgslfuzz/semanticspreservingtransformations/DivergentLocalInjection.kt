@@ -27,6 +27,63 @@ private fun selectLocalVariableTargets(
     }
 }
 
+/**
+ * Picks the inclusive index range within [compoundInfo]'s compound that the perturb/restore pair must both land in.
+ *
+ * Perturb is inserted before `statements[min]` and restore before `statements[max]`,
+ * so statement `i` executes BETWEEN them exactly when `min <= i < max`. 
+ * Nothing that would break the pair may sit there (a read of the target, or an escape from the compound)
+ *
+ * The boundaries cut `[lowestIndex, statements.size]` into segments; 
+ * a pair drawn from one segment cannot straddle. 
+ * An index EQUAL to a boundary is legal -- it places the statement immediately before the boundary,
+ * so consecutive boundaries `b1 < b2` yield the segment `[b1 + 1, b2]`.
+ *
+ * A boundary that IS a bare jump -- `break;`, `continue;`, `return;`, `discard;` as the statement
+ * itself rather than something containing one -- also ends the search: everything after it is
+ * unreachable, and a pair injected there would be dead code that exercises nothing.
+ *
+ * There is always at least one segment: the first boundary is at or after [lowestIndex], 
+ * so the segment ending at it is non-empty, and with no boundaries at all the whole range is one segment.
+ */
+private fun chooseInjectionSegment(
+    fuzzerSettings: FuzzerSettings,
+    compoundInfo: CompoundInfo,
+    target: LocalVariableTarget,
+    lowestIndex: Int,
+): Pair<Int, Int> {
+    val statements = compoundInfo.compound.statements
+    val targetName = lhsBaseIdentifierName(target.target)
+    // boundaries are indices of statements that either escape the compound or read/write the target.
+    val boundaries =
+        (lowestIndex until statements.size)
+            .filter { index ->
+                index in compoundInfo.escapeIndices ||
+                    (targetName != null && mentionsIdentifier(statements[index], targetName))
+            }
+
+    val segments = mutableListOf<Pair<Int, Int>>()
+    var segmentLow = lowestIndex
+    var reachable = true
+    for (boundary in boundaries) {
+        if (segmentLow <= boundary) {
+            segments.add(segmentLow to boundary)
+        }
+        segmentLow = boundary + 1
+        // boundary is captured by escapeIndices. But it could be an exit given a particular condition in the subtree, so the statements after it are still reachable. Only a bare jump itself makes the rest unreachable, making it deadcode that is pointless to inject into.
+        // TODO: if want to innject into deadcode, remove the if (isBareJump(...)) check, as well as the if(reachable) check after the loop.
+        if (isBareJump(statements[boundary])) {
+            reachable = false
+            break
+        }
+    }
+    // An unreachable segment is still a legal injection site, though technically it is dead code that exercises nothing.
+    if (reachable) {
+        segments.add(segmentLow to statements.size)
+    }
+    return fuzzerSettings.randomElement(segments)
+}
+
 internal fun applyV2(
     shaderJob: ShaderJob,
     fuzzerSettings: FuzzerSettings,
@@ -101,21 +158,10 @@ internal fun applyV2(
             } else {
                 0
             }
-        // The target is read in this scope, so both statements must land before the first such read.
-        // Reads before lowestIndex cannot refer to this declaration (refer to outer variable), so not of concern here.
-        val firstReadIndex =
-            compoundInfo.reads
-                .filter{ (name, index) -> name == lhsBaseIdentifierName(target.target) && index >= lowestIndex }
-                .minOfOrNull { (_, index) -> index }
-        // Nothing may be injected at or after a disqualifying exit
-        val highestIndex =
-            minOf(
-                firstReadIndex ?: compound.statements.size,
-                compoundInfo.exitIndex ?: compound.statements.size,
-            )
-        // +1 to include highestIndex as the max legal index for injection
-        val index1: Int = fuzzerSettings.randomInt(lowestIndex, highestIndex + 1)
-        val index2: Int = fuzzerSettings.randomInt(lowestIndex, highestIndex + 1)
+        val (segmentLow, segmentHigh) = chooseInjectionSegment(fuzzerSettings, compoundInfo, target, lowestIndex)
+        // +1 to include segmentHigh as the max legal index for injection
+        val index1: Int = fuzzerSettings.randomInt(segmentLow, segmentHigh + 1)
+        val index2: Int = fuzzerSettings.randomInt(segmentLow, segmentHigh + 1)
 
         // Both statements carry the SAME id, so the reducer deletes them together or not at all,
         // and ONE condition template supplies both guards, so they cannot disagree.

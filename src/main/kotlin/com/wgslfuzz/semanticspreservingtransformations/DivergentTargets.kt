@@ -180,21 +180,27 @@ internal data class LocalVariableTarget(
 internal class CompoundInfo (
     val compound: Statement.Compound,
 ) {
-    val reads = mutableListOf<Pair<String, Int>>() // Each pair is identifierName, index of read in CURRENT compound
+    // Each pair is identifierName, index of read in CURRENT compound.
+    // Records reads in this compound's own statements only -- a read inside a nested scope belongs
+    // to that scope's CompoundInfo.
+    val reads = mutableListOf<Pair<String, Int>>()
     val childrenCompound = mutableListOf<CompoundInfo>()
     /**
-     * Index of the first disqualifying exit among this compound's OWN statements, or null. 
-     * Everything from [exitIndex] onwards is ignored since that code might or might not run.
-     *  -- no declaration there is a candidate, no read there is recorded, and no injection may be placed there -- 
+     * Indices, in source order, of this compound's OWN statements that may transfer control out of
+     * it -- see [escapesCompound]. A perturb/restore pair must not straddle one of these, or the
+     * escape strands the restore and leaves the target perturbed.
+     *
+     * The walk does NOT stop at the first escape: statements past it still run when the escape does
+     * not fire, so they are still analysed for reads (declarations are excluded; guarantees correctness), their nested scopes are still registered, and a pair
+     * placed wholly after an escape is safe. 
      */
-    var exitIndex: Int? = null
+    val escapeIndices = mutableListOf<Int>()
 }
 
 /**
  * Every scope in the tree rooted at this one, keyed by its compound. [Statement.Compound] is a plain
  * class, so lookup is by identity -- the same assumption applyV2's `injections` map already makes.
- * A compound ABSENT from this map is one the walk deliberately did not analyse, because it sits
- * after a disqualifying exit, and so must not be injected into.
+ * Every compound reachable from the entry point body is analysed, except an injection applyV2 itself synthesised.
  */
 internal fun CompoundInfo.scopesByCompound(): Map<Statement.Compound, CompoundInfo> {
     val result = mutableMapOf<Statement.Compound, CompoundInfo>()
@@ -205,21 +211,6 @@ internal fun CompoundInfo.scopesByCompound(): Map<Statement.Compound, CompoundIn
     collect(this)
     return result
 }
-
-
-// internal fun collectReads(
-//     node: AstNode,
-//     reads: MutableList<String>, // Names of local variables read in given compound, given index ie. specific statement in compound
-// ): List<String> {
-//     when (node) {
-//         is Statement.Compound -> throw IllegalArgumentException("collectReads must not be called on a Compound; nested scopes are handled by the caller")
-//         is Expression.Identifier -> reads.add(node.name)
-//         is Expression.ValueConstructor -> reads.add(node.constructorName)
-//         else -> {}
-//     }
-//     traverse(::collectReads, node, reads)
-//     return reads
-// }
 
 /**
  * For v2. Walks [body], treating every Statement.Compound as a lexical scope, and finds all local
@@ -271,6 +262,7 @@ internal fun findLocalVariableCandidates(
             val statement = statements[index] 
             val nested = mutableListOf<CompoundInfo>()
             // Current statement: collect if it is a read, and collect if it is nested compounds but only walk it, else nothing happens.
+            // Eg. calling splitStatement on a `If` statement will fire onNestedCompound for the thenBranch and the elseBranch. Both would be appended to `nested`.
             splitStatement(
                 statement,
                 onRead = { name ->
@@ -284,10 +276,16 @@ internal fun findLocalVariableCandidates(
             compoundInfo.childrenCompound.addAll(nested)
             nested.forEach { walk(it, inScopeVariables, candidates) } 
 
+            // Record a statement that may leave this compound early. Statements after it are still analysed.
+            if (escapesCompound(statement)) {
+                compoundInfo.escapeIndices.add(index)
+            }
+
             // Collect local variable declaration, and add it as a candidate if it resolves to a scalar.
-            // Only declarations that are itself an element of the compound's OWN statements are considered. 
+            // Only declarations that are itself an element of the compound's OWN statements are considered.
             // Specifically. a `var` declared in a for-loop header is a Statement.Variable, but this Statement.Variable is not in compoundInfo.compound.statements[idx], so it is not considered a candidate for injection at all. TODO
-            if (statement is Statement.Variable) {
+            // A declaration past the first escape is skipped: it might or might not be reached; ie. look for declaration only when compound has yet to record any escape.
+            if (statement is Statement.Variable && compoundInfo.escapeIndices.isEmpty()) {
                 val variableType =
                     statement.typeDecl?.toType(shaderJob.environment.globalScope, shaderJob.environment) // Variable type explicitly declared
                         ?: statement.initializer?.let { shaderJob.environment.typeOf(it).asStoreTypeIfReference() } // If not, infer from initializer
@@ -305,13 +303,6 @@ internal fun findLocalVariableCandidates(
                         inScopeVariables.add(candidate)
                     }
                 }
-            } else if (isDisqualifyingExit(statement)) {
-                // Stop looking at this compound entirely: code from here on might or might not run.
-                // Nothing beyond this point is a candidate or a read, applyV2 must not inject past
-                // this index, and a compound out here gets no CompoundInfo at all -- so applyV2's
-                // scope lookup misses it and leaves it alone.
-                compoundInfo.exitIndex = index
-                break
             }
         }
 
@@ -393,15 +384,83 @@ internal fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
     }
 
 /**
- * True if [statement] is a jump that could leave the enclosing loop/function before a later
- * statement in the same Compound (ie. scope) runs: Break, Return, Discard.
+ * True if executing [statement] may transfer control out of the compound that directly contains it,
+ * so that a later statement in that same compound does not run.
  *
- * Continue is deliberately excluded: it only skips to the next loop iteration, and the write
- * refreshes the variable before it is read again, so a restore stranded by a Continue is never
- * actually observed by a stale read.
+ * The whole subtree is examined, and each jump is attributed to the construct that owns it:
+ * - Return / Discard always escape -- they leave the function outright.
+ * - Break: considered an escape only up till its enclosing Loop/For/While/Switch; does not propagate outside.
+ * - Continue: considered an escape only up till its enclosing Loop/For/While.
+ * - The Break and Continue applicable scopes are tracked by inLoop and inSwitch flags, which are set when the walk enters a loop or switch.
  */
-internal fun isDisqualifyingExit(statement: Statement): Boolean =
-    statement is Statement.Break || statement is Statement.Return || statement is Statement.Discard || statement is Statement.Continue
+internal fun escapesCompound(statement: Statement): Boolean {
+    fun escapes(
+        node: AstNode,
+        inLoop: Boolean,
+        inSwitch: Boolean,
+    ): Boolean {
+        when (node) {
+            is Statement.Return, is Statement.Discard -> return true
+            is Statement.Break -> if (!inLoop && !inSwitch) return true
+            is Statement.Continue -> if (!inLoop) return true
+            else -> {}
+        }
+        val isLoop = node is Statement.Loop || node is Statement.For || node is Statement.While
+        // A loop nested inside a switch captures its own `break`, so `inSwitch` is not inherited past it.
+        val childInSwitch = if (isLoop) false else inSwitch || node is Statement.Switch
+        var found = false
+        traverse(
+            { child, _ ->
+                if (!found && escapes(child, inLoop || isLoop, childInSwitch)) {
+                    found = true
+                }
+            },
+            node,
+            Unit,
+        )
+        return found
+    }
+    return escapes(statement, inLoop = false, inSwitch = false)
+}
+
+/**
+ * True if [statement] is itself an unconditional jump, so that everything after it in its compound is unreachable.
+ * Differs from `escapesCompound` in that it does not look into the subtree ie. inside the statement for nested jumps, and so does not consider a `break` inside a loop to be an escape from the enclosing compound.
+ */
+internal fun isBareJump(statement: Statement): Boolean =
+    statement is Statement.Break ||
+        statement is Statement.Continue ||
+        statement is Statement.Return ||
+        statement is Statement.Discard
+
+/**
+ * True if [name] appears anywhere in [node]'s subtree, at any depth and including inside nested compounds,
+ * as a read (Expression.Identifier) or as an assignment target (LhsExpression.Identifier). An assignment also counts as injecting a perturbation before the assignment and restoring it after the assignment, leads to modification to the variable by the specfified thread, but not by the original shader.
+ *
+ * `compoundInfo.reads` cannot answer this, since it stops at nested scopes and only
+ * records reads.
+ *
+ * Deliberately conservative: a nested scope that shadows [name] with its own declaration still
+ * counts, and so does a use inside a branch that never executes.
+ *
+ * Known gap: the match is on the identifier itself. A pointer to the target (`&x`) stored in a
+ * local and dereferenced later is not recognised at the deref site -- though the address-of site
+ * is, since it names the target.
+ */
+internal fun mentionsIdentifier(
+    node: AstNode,
+    name: String,
+): Boolean {
+    if (node is Expression.Identifier && node.name == name) {
+        return true
+    }
+    if (node is LhsExpression.Identifier && node.name == name) {
+        return true
+    }
+    var found = false
+    traverse({ child, _ -> if (!found && mentionsIdentifier(child, name)) found = true }, node, Unit)
+    return found
+}
 
 internal fun zeroIndex(): Expression = Expression.IntLiteral("0i")
 

@@ -41,6 +41,12 @@ import com.wgslfuzz.core.Type
 //   gated by conditions that agree per-thread -- unlike v0/v1's throwaway counter, this variable
 //   is real program state the shader still reads, so an unmatched branch would corrupt it rather
 //   than merely skew a diagnostic.
+// - Which code may sit between them is restricted: 
+//   a statement that can leave the compound early
+//   (a `break`/`continue`/`return` anywhere in its subtree, not just as the statement itself)
+//   would strand the restore,
+//   and a statement that reads or writes the target would observe the perturbed value.
+//   see chooseInjectionSegment in DivergentLocalInjection.kt.
 // - The declaration and the use need not share a scope: a `var` declared in an outer scope (eg. a
 //   function body) may be perturbed inside an inner scope (eg. a `for` loop body). Which scope is
 //   chosen, and where within it the two statements land, is randomized.
