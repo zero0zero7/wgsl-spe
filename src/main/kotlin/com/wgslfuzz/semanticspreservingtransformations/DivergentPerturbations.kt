@@ -51,7 +51,7 @@ internal fun scalarLiteral(
  * `x + D` / `x - D`.
  *
  * WGSL defines wraparound in 2s complement `(x + d) - d == x` mod 2^32, 
- * thus no bound on the operand required.
+ * thus no bound on the operand required. Reconditioned right before execution anyway.
  */
 private class AddSub(
     private val delta: Int,

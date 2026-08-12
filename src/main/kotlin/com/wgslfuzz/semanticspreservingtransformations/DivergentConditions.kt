@@ -215,7 +215,7 @@ internal fun chooseConditionTemplate(
                 },
             weights.moduloVersusMask to
                 {
-                    val n = 1 shl fuzzerSettings.randomInt(1, 5) // 2, 4, 8 or 16
+                    val n = 1 shl fuzzerSettings.randomInt(1, 5) // 2, 4, 8 or 16. n = power of 2
                     ModuloVersusMask(n, fuzzerSettings.randomInt(0, n))
                 },
             weights.bitTest to { BitTest(fuzzerSettings.randomInt(0, 8)) },
