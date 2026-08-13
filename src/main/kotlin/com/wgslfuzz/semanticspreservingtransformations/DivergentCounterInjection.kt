@@ -32,26 +32,12 @@ private fun createDivergentCounterPair(
     context: EntryPointContext,
 ): List<Statement> {
     // The counter is declared u32 by counterInstance, so the perturbation operand must be u32 too.
-    val perturbation = choosePerturbation(fuzzerSettings, context, Type.U32) ?: return emptyList()
+    val shape = chooseShape(fuzzerSettings, context, Type.U32) ?: return emptyList()
     val guards = chooseConditionTemplate(fuzzerSettings, context)
     val id = fuzzerSettings.getUniqueId() // one id per pair, so the reducer deletes both or neither
-    val target = context.counter()
-    return listOf(
-        perturbationStatement(
-            guard = guards.perturbGuard(context),
-            target = target,
-            newValue = perturbation.perturb(target),
-            id = id,
-            commentary = "divergent perturbation: ${perturbation.commentary} under ${guards.commentary}",
-        ),
-        perturbationStatement(
-            guard = guards.restoreGuard(context),
-            target = target,
-            newValue = perturbation.restore(target),
-            id = id,
-            commentary = "divergent restore",
-        ),
-    )
+    // v0/v1 place the two halves adjacently, so a shape's temporary declaration already lands in
+    // the same compound as its uses -- no hoisting problem to solve.
+    return shape.build(guards, context, context.counter(), id).adjacent
 }
 
 /**

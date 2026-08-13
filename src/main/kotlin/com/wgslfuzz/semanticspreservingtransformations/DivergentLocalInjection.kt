@@ -139,9 +139,9 @@ internal fun applyV2(
         // - keep both after the declaration when the target is declared in this scope
         // - keep both before the read if target is read in this scope
         val target = fuzzerSettings.randomElement(qualifiedTargets)
-        val perturbation = choosePerturbation(fuzzerSettings, context, target.targetType)
-        if (perturbation == null) {
-            // No template applies to this scalar type (floats, while they are deferred). 
+        val template = chooseTemplate(fuzzerSettings, context, target.targetType)
+        if (template == null) {
+            // No template applies to this scalar type -- f16, with the snapshot template disabled.
             // Recurse into nested scopes but inject nothing here.
             compound.statements.forEachIndexed { statementIndex, statement ->
                 newStatements.add(
@@ -163,30 +163,18 @@ internal fun applyV2(
         val index1: Int = fuzzerSettings.randomInt(segmentLow, segmentHigh + 1)
         val index2: Int = fuzzerSettings.randomInt(segmentLow, segmentHigh + 1)
 
-        // Both statements carry the SAME id, so the reducer deletes them together or not at all,
+        // Every statement carries the SAME id, so the reducer deletes them together or not at all,
         // and ONE condition template supplies both guards, so they cannot disagree.
         val guards = chooseConditionTemplate(fuzzerSettings, context)
-        val perturbStatement =
-            perturbationStatement(
-                guard = guards.perturbGuard(context),
-                target = target.target,
-                newValue = perturbation.perturb(target.target),
-                id = id,
-                commentary = "divergent perturbation: ${perturbation.commentary} under ${guards.commentary}",
-            )
-        val restoreStatement =
-            perturbationStatement(
-                guard = guards.restoreGuard(context),
-                target = target.target,
-                newValue = perturbation.restore(target.target),
-                id = id,
-                commentary = "divergent restore",
-            )
+        val pair = template.build(guards, context, target.target, id)
 
         // Inject the new statements, cloning the existing ones over around them.
+        // A template needing a temporary contributes its declaration at the head of atPerturbIndex, so
+        // it lands in THIS compound, ahead of and outside both guards -- a declaration inside a
+        // guard's `then` block would not be in scope at the restore.
         for (i in 0..compound.statements.size) {
-            if (i == min(index1, index2)) newStatements.add(perturbStatement)
-            if (i == max(index1, index2)) newStatements.add(restoreStatement)
+            if (i == min(index1, index2)) newStatements.addAll(pair.atPerturbIndex)
+            if (i == max(index1, index2)) newStatements.addAll(pair.atRestoreIndex)
             if (i < compound.statements.size) {
                 newStatements.add(
                     compound.statements[i].clone { node -> injectInto(node, i) },

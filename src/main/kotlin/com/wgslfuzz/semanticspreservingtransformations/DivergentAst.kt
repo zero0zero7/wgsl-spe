@@ -14,6 +14,7 @@ import com.wgslfuzz.core.LhsExpression
 import com.wgslfuzz.core.ParameterDecl
 import com.wgslfuzz.core.Statement
 import com.wgslfuzz.core.StructMember
+import com.wgslfuzz.core.Type
 import com.wgslfuzz.core.TypeDecl
 
 // Pure AST constructors for the divergent-injection transformations: no randomness, no policy,
@@ -122,13 +123,38 @@ internal fun lidParameter(suffix: Int = -1): Pair<ParameterDecl, Expression> {
 }
 
 /**
- * `if (<guard>) { <target> = <newValue>; }`
+ * `if (<guard>) { <body> }`
  *
- * Both halves of a perturb/restore pair must be built with the SAME [id]. The reducer collapses
- * all nodes sharing an id into one opportunity (Reducer.kt `findOpportunities` calls `.distinct()`),
- * so the pair is always deleted together -- never one without the other, which would leave the
- * target permanently perturbed.
+ * Every statement an injected pair contributes -- both guarded halves AND any temporary it
+ * declares -- must be built with the SAME [id]. The reducer collapses all nodes sharing an id into
+ * one opportunity (Reducer.kt `findOpportunities` calls `.distinct()`), so they are always deleted
+ * together: never the perturb without the restore, which would leave the target permanently
+ * perturbed, and never a declaration without its uses, which would not compile.
  */
+internal fun guardedStatement(
+    guard: Expression,
+    body: List<Statement>,
+    id: Int,
+    commentary: String,
+): Statement.If =
+    Statement.If(
+        condition = guard,
+        thenBranch = Statement.Compound(body),
+        metadata = setOf(AugmentedMetadata.DeletableStatement(id, commentary)),
+    )
+
+/** `<target> = <value>;` */
+internal fun assign(
+    target: LhsExpression,
+    value: Expression,
+): Statement.Assignment =
+    Statement.Assignment(
+        lhsExpression = target.clone(),
+        assignmentOperator = AssignmentOperator.EQUAL,
+        rhs = value,
+    )
+
+/** `if (<guard>) { <target> = <newValue>; }` -- the single-assignment case of [guardedStatement]. */
 internal fun perturbationStatement(
     guard: Expression,
     target: LhsExpression,
@@ -136,17 +162,54 @@ internal fun perturbationStatement(
     id: Int,
     commentary: String,
 ): Statement.If =
-    Statement.If(
-        condition = guard,
-        thenBranch =
-            Statement.Compound(
-                listOf(
-                    Statement.Assignment(
-                        lhsExpression = target.clone(),
-                        assignmentOperator = AssignmentOperator.EQUAL,
-                        rhs = newValue,
-                    ),
-                ),
-            ),
-        metadata = setOf(AugmentedMetadata.DeletableStatement(id, commentary)),
+    guardedStatement(
+        guard = guard,
+        body = listOf(assign(target, newValue)),
+        id = id,
+        commentary = commentary,
+    )
+
+/**
+ * The temporary a snapshot or temp-copy pair introduces. Named from the pair's id, so two pairs in
+ * the same scope can never collide.
+ */
+internal fun injectedTempName(id: Int): String = "injected_$id"
+
+/**
+ * `let injected_<id> = <target>;`
+ *
+ * Hoisted into the ENCLOSING compound, ahead of and OUTSIDE the perturb guard. A declaration
+ * inside the perturb's `then` block would go out of scope at that block's closing brace, long
+ * before the restore -- a statement in a different compound -- could name it. Unguarded for the
+ * same reason, which is harmless: a thread that fails the guard takes a snapshot and never uses it.
+ */
+internal fun snapshotDeclaration(
+    name: String,
+    target: LhsExpression,
+    id: Int,
+    commentary: String,
+): Statement.Value =
+    Statement.Value(
+        isConst = false,
+        name = name,
+        initializer = lhsExprToExpr(target),
+        metadata = setOf(AugmentedMetadata.DeletableStatement(id, commentary), AddedIdentifier(name)),
+    )
+
+/**
+ * `var injected_<id> : <type>;`
+ *
+ * Same hoisting requirement as [snapshotDeclaration], but mutable and left uninitialised: WGSL
+ * zero-initialises a function-scope `var`, and it is only ever written under the restore guard.
+ */
+internal fun scratchDeclaration(
+    name: String,
+    type: Type.Scalar,
+    id: Int,
+    commentary: String,
+): Statement.Variable =
+    Statement.Variable(
+        name = name,
+        typeDecl = scalarTypeDecl(type),
+        metadata = setOf(AugmentedMetadata.DeletableStatement(id, commentary), AddedIdentifier(name)),
     )

@@ -104,13 +104,16 @@ interface FuzzerSettings {
     val divergentConditionWeights: DivergentConditionWeights
         get() = DivergentConditionWeights()
 
-    // How an injected pair modifies its target. See DivergentPerturbations.kt.
-    // One field for now; each deferred template (MulOdd, XorMask, BitwiseNot, RotateU32) adds one.
-    // TODO
     data class DivergentPerturbationWeights(
+        val restorable: Int = 30,
+        val nonRestorable: Int = 70,
+        // --- restorable transformations: used by algebraic and temp-copy ---
         val addSub: Int = 1,
-        // i32/f32 always; u32 only when the hidden zero is available (v1/v2, not v0).
-        val negate: Int = 1,
+        val negate: Int = 1, // i32/f32 always; u32 only when the hidden zero is available ie. v1/v2 not v0.
+        // --- templates ---
+        val algebraic: Int = 3, // takes on addSub or negate
+        val tempCopy: Int = 1, // perturnation to target must be restorable, done via an intermediary temp variable
+        val snapshot: Int = 1, // perturbation to target can be non-restorable
     )
 
     val divergentPerturbationWeights: DivergentPerturbationWeights
