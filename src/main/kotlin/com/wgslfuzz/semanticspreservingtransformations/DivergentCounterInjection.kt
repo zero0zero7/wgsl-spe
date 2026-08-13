@@ -32,12 +32,12 @@ private fun createDivergentCounterPair(
     context: EntryPointContext,
 ): List<Statement> {
     // The counter is declared u32 by counterInstance, so the perturbation operand must be u32 too.
-    val shape = chooseShape(fuzzerSettings, context, Type.U32) ?: return emptyList()
+    val template = chooseTemplate(fuzzerSettings, context, Type.U32) ?: return emptyList()
     val guards = chooseConditionTemplate(fuzzerSettings, context)
     val id = fuzzerSettings.getUniqueId() // one id per pair, so the reducer deletes both or neither
-    // v0/v1 place the two halves adjacently, so a shape's temporary declaration already lands in
+    // v0/v1 place the two injections adjacently, so a template's temporary declaration already lands in
     // the same compound as its uses -- no hoisting problem to solve.
-    return shape.build(guards, context, context.counter(), id).adjacent
+    return template.build(guards, context, context.counter(), id).adjacent
 }
 
 /**

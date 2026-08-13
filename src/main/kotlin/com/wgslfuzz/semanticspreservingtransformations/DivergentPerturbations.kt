@@ -186,6 +186,7 @@ internal fun chooseRestorablePerturbation(
         }
     val choices: List<Pair<Int, () -> RestorablePerturbation>> =
         listOfNotNull(
+            // Add then Subtract
             if (type == Type.I32 || type == Type.U32) {
                 weights.addSub to { AddSub(fuzzerSettings.randomInt(1, 1001), type) }
             } else {
@@ -236,7 +237,11 @@ internal fun choosePerturbation(
         )
     val restorable = chooseRestorablePerturbation(fuzzerSettings, context, type)
     val choices: List<Pair<Int, () -> Perturbation>> =
-        listOfNotNull( // Equal chance within the nonRestorable/restorable group
+        listOfNotNull( 
+            // Select a random non-restorable transformation
+            // Select a random restorable transformation
+            // Both are fine as we just need a template that doesnt require restorability
+            // Select from the two, with the non-restorable transformations weighted 60% and the restorable 40% (from FuzzerSettings)
             weights.nonRestorable to { fuzzerSettings.randomElement(nonRestorable)() },
             restorable?.let { weights.restorable to { it } },
         ).filter { it.first > 0 }
@@ -267,7 +272,9 @@ internal class InjectedPair(
     val atPerturbIndex: List<Statement>,
     val atRestoreIndex: List<Statement>,
 ) {
-    /** For v0/v1, which place the two halves adjacent to each other at a single index. */
+    /** For v0/v1, which place the two halves adjacent to each other at a single index. 
+    * Returns a single list of statements (instead of 2 separate lists)
+    */
     val adjacent: List<Statement> get() = atPerturbIndex + atRestoreIndex
 }
 
@@ -448,8 +455,8 @@ private class TempCopyTemplate(
  * [SnapshotTemplate] applies to every scalar type, so null comes back only when its weight is zero AND
  * no restorable transformation exists for [type]: today, f16 with the snapshot template disabled.
  *
- * v0/v1 place both halves adjacently, so any template works there. v2 places them apart, which is what
- * makes the hoisted declaration necessary.
+ * v0/v1 place both halves adjacently, so any template works there. 
+ * v2 places them apart (interleaved with other existing code), hence the hoisted declaration is necessary.
  */
 internal fun chooseTemplate(
     fuzzerSettings: FuzzerSettings,
@@ -457,7 +464,7 @@ internal fun chooseTemplate(
     type: Type.Scalar,
 ): PerturbationTemplate? {
     val weights = fuzzerSettings.divergentPerturbationWeights
-    // Drawn once and shared: the two templates that need an inverse need exactly one.
+    // Select a random restorable transformation, to be used if algebraic or tempCopy is selected later.
     val restorable = chooseRestorablePerturbation(fuzzerSettings, context, type)
     val choices: List<Pair<Int, () -> PerturbationTemplate> =
         listOfNotNull(

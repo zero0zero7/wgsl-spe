@@ -124,12 +124,6 @@ internal fun lidParameter(suffix: Int = -1): Pair<ParameterDecl, Expression> {
 
 /**
  * `if (<guard>) { <body> }`
- *
- * Every statement an injected pair contributes -- both guarded halves AND any temporary it
- * declares -- must be built with the SAME [id]. The reducer collapses all nodes sharing an id into
- * one opportunity (Reducer.kt `findOpportunities` calls `.distinct()`), so they are always deleted
- * together: never the perturb without the restore, which would leave the target permanently
- * perturbed, and never a declaration without its uses, which would not compile.
  */
 internal fun guardedStatement(
     guard: Expression,
@@ -154,7 +148,9 @@ internal fun assign(
         rhs = value,
     )
 
-/** `if (<guard>) { <target> = <newValue>; }` -- the single-assignment case of [guardedStatement]. */
+/** `if (<guard>) { <target> = <newValue>; }`
+* Single-assignment case of [guardedStatement]. 
+*/
 internal fun perturbationStatement(
     guard: Expression,
     target: LhsExpression,
@@ -170,18 +166,16 @@ internal fun perturbationStatement(
     )
 
 /**
- * The temporary a snapshot or temp-copy pair introduces. Named from the pair's id, so two pairs in
- * the same scope can never collide.
+ * The intermediary variable a SnapshotTemplate or TempCopyTemplate introduces. 
+ * Named from the pair's id, so two pairs in the same scope can never collide.
  */
 internal fun injectedTempName(id: Int): String = "injected_$id"
 
 /**
  * `let injected_<id> = <target>;`
  *
- * Hoisted into the ENCLOSING compound, ahead of and OUTSIDE the perturb guard. A declaration
- * inside the perturb's `then` block would go out of scope at that block's closing brace, long
- * before the restore -- a statement in a different compound -- could name it. Unguarded for the
- * same reason, which is harmless: a thread that fails the guard takes a snapshot and never uses it.
+ * Hoisted into the ENCLOSING compound, BEFORE and OUTSIDE the perturb guard,
+ * so that it is in the scope of the restoration. 
  */
 internal fun snapshotDeclaration(
     name: String,
@@ -199,8 +193,9 @@ internal fun snapshotDeclaration(
 /**
  * `var injected_<id> : <type>;`
  *
- * Same hoisting requirement as [snapshotDeclaration], but mutable and left uninitialised: WGSL
- * zero-initialises a function-scope `var`, and it is only ever written under the restore guard.
+ * Same hoisting requirement as [snapshotDeclaration], but mutable and left uninitialised: 
+ * - WGSL zero-initialises a function-scope `var`,
+ * - only written under the restore guard
  */
 internal fun scratchDeclaration(
     name: String,

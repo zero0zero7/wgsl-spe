@@ -169,9 +169,8 @@ internal fun applyV2(
         val pair = template.build(guards, context, target.target, id)
 
         // Inject the new statements, cloning the existing ones over around them.
-        // A template needing a temporary contributes its declaration at the head of atPerturbIndex, so
-        // it lands in THIS compound, ahead of and outside both guards -- a declaration inside a
-        // guard's `then` block would not be in scope at the restore.
+        // If template requires an intermediary, inject its declaration at the head of atPerturbIndex,
+        // so that it lands in THIS compound, ahead of and outside both guards.
         for (i in 0..compound.statements.size) {
             if (i == min(index1, index2)) newStatements.addAll(pair.atPerturbIndex)
             if (i == max(index1, index2)) newStatements.addAll(pair.atRestoreIndex)

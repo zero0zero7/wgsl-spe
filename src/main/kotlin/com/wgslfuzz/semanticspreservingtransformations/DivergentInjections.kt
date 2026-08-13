@@ -51,25 +51,25 @@ import com.wgslfuzz.core.Type
 //   function body) may be perturbed inside an inner scope (eg. a `for` loop body). Which scope is
 //   chosen, and where within it the two statements land, is randomized.
 //
-// Each pair also has a SHAPE (see PerturbationShape in DivergentPerturbations.kt) -- how many
+// Each pair also has a Template (see PerturbationTemplate in DivergentPerturbations.kt) -- how many
 // statements it contributes and how the restore recovers the original:
 // - algebraic:  if (gA) { t = t + 5i; } ... if (gB) { t = t - 5i; }
-//     Two statements, no temporary. The perturbed value stays LIVE across the gap because the
+//     Two statements. The perturbed value stays LIVE across the gap because the
 //     restore reads it, which makes this the strongest miscompile probe. Needs an invertible
 //     (RestorablePerturbation) template.
 // - snapshot:   let injected_N = t; if (gA) { t = t * t; } ... if (gB) { t = injected_N; }
 //     Three statements. The declaration is hoisted into the enclosing compound, unguarded and
-//     ahead of the perturb -- declared inside the guard's `then` block it would be out of scope by
-//     the restore. Because the original is saved, the perturbation needs no inverse, so arbitrary
+//     ahead of the perturb -- so that it is in the scope of the restore.
+//     Because the original is saved, the perturbation needs no inverse, so arbitrary
 //     modifications become available. The trade-off is that the perturbed value is DEAD between the
 //     halves, so a compiler that proves gA implies gB may delete the perturb outright.
 // - temp-copy:  var injected_N : T; if (gA) { t = t + 5i; } ... if (gB) { injected_N = t - 5i; t = injected_N; }
 //     Algebraic routed through a scratch var. Semantically identical to algebraic; copy propagation
-//     erases the temporary in every backend on the path, so its weight defaults to 0.
+//     erases the intermediary variable in every backend on the path, so its weight defaults to 0.
 //
-// Snapshot's correctness leans on chooseInjectionSegment: no statement between the two halves may
-// mention the target, so the rollback cannot overwrite a legitimate write. Unlike algebraic, it is
-// therefore NOT a context-free identity.
+// Every injection, regardless of template, is determined by chooseInjectionSegement,
+// which ensures that no read or write of the target occurs between the perturb and restore,
+// and that no early-exit statement occurs between them either.
 //
 // Every @compute entry point is instrumented:
 // - Limited to entry points because only they have direct access to local_invocation_id
@@ -88,7 +88,7 @@ import com.wgslfuzz.core.Type
 // `ParameterDecl` carry AddedIdentifier, which is not an AugmentedMetadata, and
 // RemoveAddedIdentifiers only removes GlobalDecl.Function -- so they are never reduced away. The
 // perturb/restore pairs themselves are reducible, atomically, via DeletableStatement.
-// The temporary a snapshot or temp-copy pair declares is NOT subject to that limitation: it carries
+// The intermediary a snapshot or temp-copy pair declares is NOT subject to that limitation: it carries
 // the pair's DeletableStatement id alongside its AddedIdentifier, so it is deleted with the two
 // halves rather than stranded -- which it must be, since the restore names it.
 
