@@ -365,7 +365,7 @@ private class SnapshotTemplate(
                         name = copyName,
                         target = target,
                         id = id,
-                        commentary = "divergent snapshot: saves $name for the restore below",
+                        commentary = "divergent snapshot: saves $copyName for the restore below",
                     ),
                     perturbationStatement(
                         guard = guards.perturbGuard(context),
@@ -466,7 +466,7 @@ internal fun chooseTemplate(
     val weights = fuzzerSettings.divergentPerturbationWeights
     // Select a random restorable transformation, to be used if algebraic or tempCopy is selected later.
     val restorable = chooseRestorablePerturbation(fuzzerSettings, context, type)
-    val choices: List<Pair<Int, () -> PerturbationTemplate> =
+    val choices: List<Pair<Int, () -> PerturbationTemplate>> =
         listOfNotNull(
             restorable?.let { weights.algebraic to { AlgebraicTemplate(it) } },
             weights.snapshot to { SnapshotTemplate(choosePerturbation(fuzzerSettings, context, type)) },
