@@ -284,8 +284,7 @@ internal fun findLocalVariableCandidates(
             // Collect local variable declaration, and add it as a candidate if it resolves to a scalar.
             // Only declarations that are itself an element of the compound's OWN statements are considered.
             // Specifically. a `var` declared in a for-loop header is a Statement.Variable, but this Statement.Variable is not in compoundInfo.compound.statements[idx], so it is not considered a candidate for injection at all. TODO
-            // A declaration past the first escape is skipped: it might or might not be reached; ie. look for declaration only when compound has yet to record any escape.
-            if (statement is Statement.Variable && compoundInfo.escapeIndices.isEmpty()) {
+            if (statement is Statement.Variable) {
                 val variableType =
                     statement.typeDecl?.toType(shaderJob.environment.globalScope, shaderJob.environment) // Variable type explicitly declared
                         ?: statement.initializer?.let { shaderJob.environment.typeOf(it).asStoreTypeIfReference() } // If not, infer from initializer
@@ -392,6 +391,8 @@ internal fun lhsBaseIdentifierName(lhs: LhsExpression?): String? =
  * - Break: considered an escape only up till its enclosing Loop/For/While/Switch; does not propagate outside.
  * - Continue: considered an escape only up till its enclosing Loop/For/While.
  * - The Break and Continue applicable scopes are tracked by inLoop and inSwitch flags, which are set when the walk enters a loop or switch.
+ * In a switch, a `break` is captured by the switch itself -- code after the switch, within the loop that contains it, still runs. 
+ * But a `continue` inside a switch will skip the code after the switch, and proceed to next iteration of the loop that contains the switch.
  */
 internal fun escapesCompound(statement: Statement): Boolean {
     fun escapes(

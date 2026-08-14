@@ -45,6 +45,10 @@ private fun selectLocalVariableTargets(
  *
  * There is always at least one segment: the first boundary is at or after [lowestIndex], 
  * so the segment ending at it is non-empty, and with no boundaries at all the whole range is one segment.
+ *
+ * The segment between 2 exits is a legal segment.
+ * As long as both injections are after the 1st exit and before the 2nd,
+ * it is guaranteed that the perturb-restore pair would run.
  */
 private fun chooseInjectionSegment(
     fuzzerSettings: FuzzerSettings,
@@ -71,7 +75,7 @@ private fun chooseInjectionSegment(
         }
         segmentLow = boundary + 1
         // boundary is captured by escapeIndices. But it could be an exit given a particular condition in the subtree, so the statements after it are still reachable. Only a bare jump itself makes the rest unreachable, making it deadcode that is pointless to inject into.
-        // TODO: if want to innject into deadcode, remove the if (isBareJump(...)) check, as well as the if(reachable) check after the loop.
+        // TODO: if want to inject into deadcode, remove the if (isBareJump(...)) check, as well as the if(reachable) check after the loop.
         if (isBareJump(statements[boundary])) {
             reachable = false
             break
@@ -155,7 +159,7 @@ internal fun applyV2(
             if (target.declCompound == compound) { // target is declared in this scope, so the perturbation must be after it
                 assert(target.declIndex != null)
                 (target.declIndex ?: -1) + 1
-            } else {
+            } else { // target is declared in outer scopes
                 0
             }
         val (segmentLow, segmentHigh) = chooseInjectionSegment(fuzzerSettings, compoundInfo, target, lowestIndex)

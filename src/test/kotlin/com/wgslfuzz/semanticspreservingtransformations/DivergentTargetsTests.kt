@@ -270,8 +270,9 @@ class DivergentTargetsTests {
     }
 
     /**
-     * Everything at or after a disqualifying exit ([isDisqualifyingExit]) is ignored.
-     * `0 var q`, `1 return`, `2 var r`, `3 p = p + r`, `4 { var w ... }`.
+     * walk() continues to traverse statements after an exit [escapeCompound].
+     * Reads and nested scopes are still analysed, but declarations are dropped since they might not be reached.
+     * Conservative analysis.
      */
     private val earlyExit =
         """
@@ -288,36 +289,43 @@ class DivergentTargetsTests {
             }
           }
           p = p + 1;
+          var s: i32 = p;
         }
         """.trimIndent()
 
     @Test
-    fun `a declaration after an exit is not a candidate`() {
+    fun `a declaration after an exit is still a candidate`() {
         val (_, candidates) = walk(earlyExit)
         assertEquals(
-            listOf("p", "q"),
+            listOf("p", "q", "r", "w", "s"),
             candidates.map { lhsBaseIdentifierName(it.target) },
-            "r and w are declared after the return, so they must not be a candidate",
+            "All declarations are recorded, including those after an exit. " +
+                    "Safe behaviour since injections are always after the target declaration.",
         )
     }
 
     @Test
-    fun `a read after an exit is not recorded`() {
+    fun `a read after an exit is still recorded`() {
         val (root, _) = walk(earlyExit)
         assertEquals(
-            emptySet<Pair<String, Int>>(),
+            setOf("p" to 3, "r" to 3),
             readsOf(descend(root, 0)),
-            "`p = p + r` sits after the return, so it must not constrain injection in this scope",
+            "`p = p + r`. Both `p` and `r` are tracked candidates. (declarations after exit are still registered)",
+        )
+        assertEquals(
+            setOf("p" to 2, "p" to 3),
+            readsOf(root),
+            "`p = p + 1` and `var s: i32 = p`",
         )
     }
 
     /**
-     * A compound after an exit is never analysed, so it gets no [CompoundInfo] and is missing from
-     * [scopesByCompound]. That absence is what stops applyV2 instrumenting it: its clone callback
-     * looks the compound up, misses, and copies the statement unchanged.
+     * A compound after an escape is still analysed and still gets a [CompoundInfo], so applyV2 can
+     * inject into it: it either runs in full or not at all, so a pair placed inside it is intact
+     * either way.
      */
     @Test
-    fun `a compound after an exit gets no scope at all`() {
+    fun `a compound after an exit still gets a scope`() {
         val (shaderJob, body) = computeBody(earlyExit)
         val thenBranch = (body.statements[1] as Statement.If).thenBranch
         val blockAfterExit = thenBranch.statements[4] as Statement.Compound
@@ -325,24 +333,101 @@ class DivergentTargetsTests {
         val (root, _) = findLocalVariableCandidates(shaderJob, body)
         val scopes = root.scopesByCompound()
 
-        assertTrue(thenBranch in scopes, "the then-branch itself is analysed, up to the return")
-        assertFalse(blockAfterExit in scopes, "the block after the return must have no scope")
+        assertTrue(thenBranch in scopes, "the then-branch itself is analysed")
+        assertTrue(blockAfterExit in scopes, "the block after the return is analysed too")
         assertEquals(
-            emptyList<CompoundInfo>(),
-            root.childrenCompound[0].childrenCompound,
-            "the then-branch registers no children, since its only nested block sits after the exit",
+            listOf(blockAfterExit),
+            root.childrenCompound[0].childrenCompound.map { it.compound },
+            "the then-branch registers its nested block even though that block sits after the return",
         )
     }
 
     @Test
-    fun `the scope containing an exit records its index`() {
+    fun `a scope records the index of every statement that can escape it`() {
         val (root, _) = walk(earlyExit)
-        assertEquals(1, descend(root, 0).exitIndex, "the return is statement 1 of the then-branch")
-        assertEquals(null, root.exitIndex, "the entry point body itself has no exit")
+        assertEquals(listOf(1), descend(root, 0).escapeIndices, "the return is statement 1 of the then-branch")
         assertEquals(
-            null,
-            descend(walk(nestedScopes).first, 0).exitIndex,
-            "a scope with no exit records none",
+            listOf(1),
+            root.escapeIndices,
+            "the if at index 1 of the body escapes it too: the return inside leaves the function",
+        )
+        assertEquals(
+            emptyList<Int>(),
+            descend(walk(nestedScopes).first, 0).escapeIndices,
+            "a scope with no escape records none",
+        )
+    }
+
+    /**
+     * A loop-exit guard the statement in which the exit is located in (exit could be nested within), not the specific line where the exit is on. A perturb/restore pair must not straddle it.
+     * In example below, th escape index for the while-loop's body is 1 (not 2 or null)
+     */
+    private val breakInsideIf =
+        """
+        @compute @workgroup_size(1)
+        fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+          var x: i32 = 1;
+          for (var i = 0; i < 10; i++) {
+            while (true) {
+              x = x + 1;
+              if (lid.x == 0u) {
+                break;
+              }
+              x = x - 1;
+              continue;
+            }
+            x = x + 2;
+          }
+        }
+        """.trimIndent()
+
+    @Test
+    fun `a break nested inside an if escapes the loop body`() {
+        val (root, _) = walk(breakInsideIf)
+        val forBody = descend(root, 0)
+        val whileBody = descend(forBody, 0)
+
+        assertEquals(
+            listOf(1, 3),
+            whileBody.escapeIndices,
+            "1: if containing the break, " +
+                    "3: `continue`",
+        )
+        assertEquals(
+            emptyList<Int>(),
+            forBody.escapeIndices,
+            "the while captures its own break and continue, so it does not escape the for body",
+        )
+        assertEquals(emptyList<Int>(), root.escapeIndices, "nothing escapes the function body")
+    }
+
+    @Test
+    fun `a switch captures break but not continue`() {
+        val (root, _) = walk(
+            """
+            @compute @workgroup_size(1)
+            fn main(@builtin(local_invocation_id) lid: vec3<u32>) {
+              var x: i32 = 1;
+              loop {
+                switch (x) {
+                  case 0: { break; }
+                  default: { x = x + 1; }
+                }
+                switch (x) {
+                  case 0: { continue; }
+                  default: { x = x + 1; }
+                }
+                break;
+              }
+            }
+            """.trimIndent(),
+        )
+        val loopBody = descend(root, 0)
+        assertEquals(
+            listOf(1, 2),
+            loopBody.escapeIndices,
+            "the switch whose clause breaks is captured by that switch -- ie. the `break` only escapes the switch itself." +
+                "only the switch with `continue` (index 1) and the loop's own break (index 2) escape the loop's body",
         )
     }
 
