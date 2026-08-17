@@ -192,8 +192,9 @@ internal fun chooseRestorablePerturbation(
             } else {
                 null
             },
-            // u32 negation needs the hidden zero; i32/f32 can negate without it.
-            if ((type == Type.I32 || type == Type.F32) || (type == Type.U32 && hiddenZero != null)) {
+            // u32 negation needs the hidden zero; i32 can negate without it.
+            // Drop f32 as reconditioner wraps it and causes a non-involution ie. not an exact inverse.
+            if (type == Type.I32 || (type == Type.U32 && hiddenZero != null)) {
                 weights.negate to
                     {
                         Negate(
