@@ -148,9 +148,12 @@ fun main(args: Array<String>) {
     }
 
     var shaderText = shaderFile.readText()
-    if (workgroupSize != null) {
-        shaderText = rewriteWorkgroupSize(shaderText, workgroupSize!!)
-    }
+    // Alternative: dont rewrite workgroupsize. 
+    // Cant set to 1 in flag, because that would affect the injected input buffer (the single-thread selector) and so v1/v2 would never see a divergent condition.
+    shaderText = rewriteWorkgroupSize(shaderText, 1)
+    // if (workgroupSize != null) {
+    //     shaderText = rewriteWorkgroupSize(shaderText, workgroupSize!!)
+    // }
 
     if (!injectDivergence) {
         // Pure text substitution only -- no need to parse/re-serialize, which would otherwise reformat the whole file for no reason.

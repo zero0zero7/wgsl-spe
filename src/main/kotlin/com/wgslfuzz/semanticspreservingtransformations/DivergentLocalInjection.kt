@@ -211,15 +211,20 @@ internal fun applyV2(
             // - For each compound, amongst all targets selected for injection, obtain the subset that are declared in that compound -> `currentTargets`
             // - If there are suitable targets (current + ancestor, filtered by index), pick randomly and perform injection in that compound, else recurse into nested compounds.
             val newBody = recursiveInjectTargetModifiers(context, compoundInfo, scopes, injectionsByCompound)
-            // Gate entry point to a single thread. 
+            // Alternatively, keep workgroupSize at 1, and no need to gate to 1 thread since gating causes divergence.
+            // // Gate entry point to a single thread. 
             val gatedBody =
+                // Statement.Compound(
+                //     listOf(
+                //         Statement.If(
+                //             condition = singleThreadCondition(context.lid(), context.opaque()!!, equals = false),
+                //             thenBranch = Statement.Compound(listOf(Statement.Return(null))),
+                //         ),
+                //     ) + newBody.statements,
+                //     newBody.metadata,
+                // )
                 Statement.Compound(
-                    listOf(
-                        Statement.If(
-                            condition = singleThreadCondition(context.lid(), context.opaque()!!, equals = false),
-                            thenBranch = Statement.Compound(listOf(Statement.Return(null))),
-                        ),
-                    ) + newBody.statements,
+                    newBody.statements,
                     newBody.metadata,
                 )
 
