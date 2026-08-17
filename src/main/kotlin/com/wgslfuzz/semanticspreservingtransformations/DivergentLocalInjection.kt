@@ -12,6 +12,8 @@ import kotlin.math.min
 // v2: instead of synthesising a counter, hijack a local `var` the entry point already declares.
 // The perturb and restore statements are no longer adjacent -- real code sits between them -- so
 // the variable is genuinely live program state rather than a throwaway diagnostic.
+//
+// v3: the same injection, ungated. See applyV3 at the bottom of this file.
 
 /**
  * 50% chance of selecting each existing local var as target, but at least one is always selected.
@@ -88,9 +90,17 @@ private fun chooseInjectionSegment(
     return fuzzerSettings.randomElement(segments)
 }
 
-internal fun applyV2(
+/**
+ * The whole of v2 and v3, which differ in exactly one thing -- [gateToSingleThread]:
+ * - v2 wraps the instrumented entry point in an early return for every invocation but the selected
+ *   one, so its run is deterministic whatever the workgroup size.
+ * - v3 leaves it ungated, relying on the workgroup size staying at the shader's own 1 for the same
+ *   determinism (see [applyV3]).
+ */
+private fun applyLocalInjection(
     shaderJob: ShaderJob,
     fuzzerSettings: FuzzerSettings,
+    gateToSingleThread: Boolean,
 ): ShaderJob? {
     val (inputBinding, _) = nextTwoBindings(shaderJob)
     val inputStruct = dataStruct(fuzzerSettings.getUniqueId())
@@ -211,26 +221,43 @@ internal fun applyV2(
             // - For each compound, amongst all targets selected for injection, obtain the subset that are declared in that compound -> `currentTargets`
             // - If there are suitable targets (current + ancestor, filtered by index), pick randomly and perform injection in that compound, else recurse into nested compounds.
             val newBody = recursiveInjectTargetModifiers(context, compoundInfo, scopes, injectionsByCompound)
-            // Alternatively, keep workgroupSize at 1, and no need to gate to 1 thread since gating causes divergence.
-            // // Gate entry point to a single thread. 
-            val gatedBody =
-                // Statement.Compound(
-                //     listOf(
-                //         Statement.If(
-                //             condition = singleThreadCondition(context.lid(), context.opaque()!!, equals = false),
-                //             thenBranch = Statement.Compound(listOf(Statement.Return(null))),
-                //         ),
-                //     ) + newBody.statements,
-                //     newBody.metadata,
-                // )
-                Statement.Compound(
-                    newBody.statements,
-                    newBody.metadata,
-                )
+            val entryBody =
+                if (gateToSingleThread) {
+                    // Gate entry point to a single thread.
+                    Statement.Compound(
+                        listOf(
+                            Statement.If(
+                                condition = singleThreadCondition(context.lid(), context.opaque()!!, equals = false),
+                                thenBranch = Statement.Compound(listOf(Statement.Return(null))),
+                            ),
+                        ) + newBody.statements,
+                        newBody.metadata,
+                    )
+                } else {
+                    newBody
+                }
 
             injected = true
-            decl.withParametersAndBody(context.parameters, gatedBody)
+            decl.withParametersAndBody(context.parameters, entryBody)
         }
     if (!injected) return null
     return rebuildShaderJob(shaderJob, newGlobalDecls, listOf(inputStruct, inputBuffer))
 }
+
+internal fun applyV2(
+    shaderJob: ShaderJob,
+    fuzzerSettings: FuzzerSettings,
+): ShaderJob? = applyLocalInjection(shaderJob, fuzzerSettings, gateToSingleThread = true)
+
+// v3: v2 without the single-thread gate.
+// The gate is itself divergent control flow -- every invocation but the selected one takes an early
+// return -- which is exactly what v3 removes, leaving the perturb/restore guards as the only control
+// flow the transformation contributes. Sound because the workgroup size is left at the shader's own
+// 1 (a single invocation, lid.x == 0), which the tooling is responsible for: see
+// ApplyDivergentInjections' handling of --divergenceVersion 3, where --workgroupSize is ignored
+// rather than applied. The thread selector must be 0 to match that invocation, otherwise every
+// selector-based guard is false and the injections are dead code.
+internal fun applyV3(
+    shaderJob: ShaderJob,
+    fuzzerSettings: FuzzerSettings,
+): ShaderJob? = applyLocalInjection(shaderJob, fuzzerSettings, gateToSingleThread = false)

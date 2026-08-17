@@ -51,6 +51,19 @@ import com.wgslfuzz.core.Type
 //   function body) may be perturbed inside an inner scope (eg. a `for` loop body). Which scope is
 //   chosen, and where within it the two statements land, is randomized.
 //
+// v3 (DivergentLocalInjection.kt): the same injection as v2, except
+// - No early-return single-thread gate. Gating is itself divergent control flow (every invocation but the
+//   selected one takes an early return), so removing it leaves the perturb/restore guards as the
+//   only control flow the transformation contributes.
+// - Determinism instead comes from the workgroup size, which is left at the shader's own
+//   @workgroup_size(1) -- wgslsmith's default -- rather than raised: exactly one invocation runs.
+//   ApplyDivergentInjections enforces this by ignoring --workgroupSize under --divergenceVersion 3.
+// - That one invocation is lid.x == 0, so the injected input buffer's thread selector must be 0 for
+//   a selector-equality guard to fire at all; the oracle pins --threadToRun 0 for v3.
+// - Its oracle runs ONE variant (there are no other thread ids to gate to) and compares it against
+//   the uninstrumented original, which runs at the same workgroup size and so dispatches the same
+//   single invocation. See _check_divergence_v3 in fuzz/lib/divergenceCheck.sh.
+//
 // Each pair also has a Template (see PerturbationTemplate in DivergentPerturbations.kt) -- how many
 // statements it contributes and how the restore recovers the original:
 // - algebraic:  if (gA) { t = t + 5i; } ... if (gB) { t = t - 5i; }
@@ -159,3 +172,9 @@ fun addDivergentInjectionsV2(
     shaderJob: ShaderJob,
     fuzzerSettings: FuzzerSettings,
 ): ShaderJob? = applyV2(shaderJob, fuzzerSettings)
+
+// Returns null when no injection was performed, exactly as V2 does.
+fun addDivergentInjectionsV3(
+    shaderJob: ShaderJob,
+    fuzzerSettings: FuzzerSettings,
+): ShaderJob? = applyV3(shaderJob, fuzzerSettings)

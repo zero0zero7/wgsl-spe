@@ -15,6 +15,7 @@ import com.wgslfuzz.semanticspreservingtransformations.FuzzerSettings
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV0
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV1
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV2
+import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV3
 import com.wgslspe.core.parseWithHardDeadline
 import com.wgslspe.core.rewriteWorkgroupSize
 import com.wgslspe.core.stripAstWriterTrailingCommas
@@ -34,13 +35,15 @@ import kotlin.random.Random
 import kotlin.random.asJavaRandom
 import kotlin.system.exitProcess
 
-// Exit status for "shader is fine but v2 has nothing to instrument" 
+// Exit status for "shader is fine but v2/v3 has nothing to instrument"
 // - distinct from 1 (usage / bad input errors) so the fuzz scripts can classify it as a skip rather than a tool failure.
 const val EXIT_NO_LOCAL_CANDIDATE = 3
 
 // Applies addDivergentInjections (DivergentInjections.kt) to a supplied shader, bypassing initMetamorphicTransformations' random pick over the full transformation list.
 //
-// --workgroupSize is REQUIRED whenever --injectDivergence is set.
+// --workgroupSize is REQUIRED whenever --injectDivergence is set, EXCEPT under --divergenceVersion 3:
+// v3 adds no early-return single-thread gate and instead relies on the shader keeping its own @workgroup_size(1),
+// so the flag is ignored rather than applied there.
 fun main(args: Array<String>) {
     val parser = ArgParser("apply-divergent-counters")
 
@@ -64,7 +67,8 @@ fun main(args: Array<String>) {
         .option(
             ArgType.Int,
             fullName = "workgroupSize",
-            description = "New (x) @workgroup_size to splice in before parsing. Required when --injectDivergence is set.",
+            description = "New (x) @workgroup_size to splice in before parsing. Required when --injectDivergence is set, " +
+                "except with --divergenceVersion 3, which keeps the shader's own size and ignores this flag.",
         )
 
     val divergenceVersion by parser
@@ -72,15 +76,16 @@ fun main(args: Array<String>) {
             ArgType.Int,
             fullName = "divergenceVersion",
             shortName = "dv",
-            description = "Which addDivergentInjections variant to apply: 0, 1 or 2. Required when --injectDivergence is set.",
+            description = "Which addDivergentInjections variant to apply: 0, 1, 2 or 3 (3 = v2 without the " +
+                "single-thread gate, at the shader's own workgroup size). Required when --injectDivergence is set.",
         )
 
     val inputsFilePath by parser
         .option(
             ArgType.String,
             fullName = "inputs",
-            description = "Path to the base inputs.json. Required with --divergenceVersion 1: the v1 " +
-                "transformation adds a storage input buffer (the single-thread selector), so its byte " +
+            description = "Path to the base inputs.json. Required with --divergenceVersion 1, 2 or 3: those " +
+                "transformations add a storage input buffer (the single-thread selector), so its byte " +
                 "value must be appended to the inputs fed to the variant.",
         ).default("inputs.json")
 
@@ -88,7 +93,7 @@ fun main(args: Array<String>) {
         .option(
             ArgType.String,
             fullName = "inputs-out",
-            description = "Where to write the augmented inputs.json for --divergenceVersion 1 (base " +
+            description = "Where to write the augmented inputs.json for --divergenceVersion 1, 2 or 3 (base " +
                 "--inputs is left untouched, since the uninstrumented original still runs against it).",
         ).default("inputsWithThread.json")
 
@@ -99,7 +104,8 @@ fun main(args: Array<String>) {
             description = "local_invocation_id.x value the v1/v2 single-thread gate admits, written into " +
                 "the injected input buffer. Also the value DivergentConditions' DivisorPair template " +
                 "derives its divisors from, so it is passed to the transformation as well as to the " +
-                "inputs file -- the two cannot drift apart.",
+                "inputs file -- the two cannot drift apart. v3 has no gate and runs only invocation " +
+                "0, so it wants 0 here: any other value leaves every selector-based guard false.",
         ).default(DEFAULT_THREAD_TO_RUN)
 
     val parseTimeout by parser
@@ -111,21 +117,22 @@ fun main(args: Array<String>) {
 
     parser.parse(args)
 
-    if (injectDivergence && workgroupSize == null) {
+    if (injectDivergence && divergenceVersion != 3 && workgroupSize == null) {
         System.err.println(
             "--workgroupSize is required when --injectDivergence is set (local_invocation_id " +
                 "is constant under the corpus's default @workgroup_size(1), so intra-workgroup " +
-                "divergence needs an explicit size > 1).",
+                "divergence needs an explicit size > 1). Not so for --divergenceVersion 3, which " +
+                "deliberately keeps the shader's own workgroup size and ignores the flag.",
         )
         exitProcess(1)
     }
 
     if (injectDivergence && divergenceVersion == null) {
-        System.err.println("--divergenceVersion is required when --injectDivergence is set (0, 1 or 2).")
+        System.err.println("--divergenceVersion is required when --injectDivergence is set (0, 1, 2 or 3).")
         exitProcess(1)
     }
-    if (divergenceVersion != null && divergenceVersion !in 0..2) {
-        System.err.println("--divergenceVersion must be 0, 1 or 2, got $divergenceVersion")
+    if (divergenceVersion != null && divergenceVersion !in 0..3) {
+        System.err.println("--divergenceVersion must be 0, 1, 2 or 3, got $divergenceVersion")
         exitProcess(1)
     }
     if (injectDivergence && divergenceVersion == 1 && inputsFilePath == null) {
@@ -148,12 +155,12 @@ fun main(args: Array<String>) {
     }
 
     var shaderText = shaderFile.readText()
-    // Alternative: dont rewrite workgroupsize. 
-    // Cant set to 1 in flag, because that would affect the injected input buffer (the single-thread selector) and so v1/v2 would never see a divergent condition.
-    shaderText = rewriteWorkgroupSize(shaderText, 1)
-    // if (workgroupSize != null) {
-    //     shaderText = rewriteWorkgroupSize(shaderText, workgroupSize!!)
-    // }
+    // v3 runs the shader at its OWN @workgroup_size (1 for wgslsmith output): it adds no gate, so
+    // its single invocation is lid.x == 0 and the injected guards are judged against that.
+    // --workgroupSize is ignored there rather than applied.
+    if (workgroupSize != null && divergenceVersion != 3) {
+        shaderText = rewriteWorkgroupSize(shaderText, workgroupSize!!)
+    }
 
     if (!injectDivergence) {
         // Pure text substitution only -- no need to parse/re-serialize, which would otherwise reformat the whole file for no reason.
@@ -173,19 +180,21 @@ fun main(args: Array<String>) {
     val shaderJob = parseWithHardDeadline(shaderText, uniformBuffers, parseTimeout)
     val fuzzerSettings: FuzzerSettings =
         ThreadToRunSettings(DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom()), threadToRun)
+    // Exit with a distinct status when v2/v3 fail to find a suitable local variable to hijack.
+    fun noLocalCandidate(): Nothing {
+        System.err.println(
+            "no-local-candidate: no @compute entry point declares a function-scope " +
+                "var for v2/v3 to hijack; variant skipped, no output written.",
+        )
+        exitProcess(EXIT_NO_LOCAL_CANDIDATE)
+    }
+
     val transformedShaderJob =
         when (divergenceVersion) {
             0 -> addDivergentInjectionsV0(shaderJob, fuzzerSettings)
             1 -> addDivergentInjectionsV1(shaderJob, fuzzerSettings)
-            else -> 
-                addDivergentInjectionsV2(shaderJob, fuzzerSettings) ?: run {
-                    // Exit with error when v2 fails to find a suitable local variable to hijack.
-                    System.err.println(
-                        "no-local-candidate: no @compute entry point declares a function-scope " +
-                            "var for v2 to hijack; variant skipped, no output written.",
-                    )
-                    exitProcess(EXIT_NO_LOCAL_CANDIDATE)
-                }
+            3 -> addDivergentInjectionsV3(shaderJob, fuzzerSettings) ?: noLocalCandidate()
+            else -> addDivergentInjectionsV2(shaderJob, fuzzerSettings) ?: noLocalCandidate()
         }
 
     val textOut = ByteArrayOutputStream()
