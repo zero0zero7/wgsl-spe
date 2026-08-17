@@ -60,6 +60,9 @@ import com.wgslfuzz.core.Type
 //   ApplyDivergentInjections enforces this by ignoring --workgroupSize under --divergenceVersion 3.
 // - That one invocation is lid.x == 0, so the injected input buffer's thread selector must be 0 for
 //   a selector-equality guard to fire at all; the oracle pins --threadToRun 0 for v3.
+//   Every OTHER guard shape is likewise built to hold at threadToRun -- see clause 5 of the
+//   DivergentConditionTemplate contract in DivergentConditions.kt -- so under v3 every injected
+//   pair fires rather than sitting dead behind a predicate 0 cannot satisfy.
 // - Its oracle runs ONE variant (there are no other thread ids to gate to) and compares it against
 //   the uninstrumented original, which runs at the same workgroup size and so dispatches the same
 //   single invocation. See _check_divergence_v3 in fuzz/lib/divergenceCheck.sh.

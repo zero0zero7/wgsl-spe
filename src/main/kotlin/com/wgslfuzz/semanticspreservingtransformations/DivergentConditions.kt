@@ -10,6 +10,11 @@ import com.wgslfuzz.core.clone
 // A perturb/restore pair is only semantics preserving if BOTH guards evaluate the same way for
 // every invocation. That is enforced here by construction: ONE template instance yields both
 // spellings.
+//
+// Every template is additionally built so that its guards are TRUE eg. `lid.x == threadToRun()` --
+// the invocation the injection is meant to perturb. The constants a template compares against are
+// therefore derived from that thread rather than drawn freely: a guard that is false there leaves
+// the pair dead, perturbing nothing and so testing nothing.
 
 /** `<lid>.x`, a u32. The shared free variable of every template below. */
 private fun lidX(context: EntryPointContext): Expression = Expression.MemberLookup(context.lid(), "x")
@@ -36,6 +41,8 @@ private fun binary(
  *  3. Neither guard reads the perturbed target, nor anything a perturbation writes: the restore
  *     guard runs while the target is perturbed and must still agree with the perturb guard.
  *  4. Total and side-effect free: no divide-by-zero, no shift >= 32.
+ *  5. Both guards are TRUE, so the pair actually fires on the invocation the gate admits.
+ *     Enforced by [chooseConditionTemplate], which derives each instance's constants from that thread.
  */
 internal interface DivergentConditionTemplate {
     fun perturbGuard(context: EntryPointContext): Expression
@@ -47,7 +54,8 @@ internal interface DivergentConditionTemplate {
 
 /**
  * `t % Nu == Ru` / `!(t % Nu != Ru)`.
- * The divisor is at least 2, so that the guard is not trivially uniform (always true) for all invocations.
+ * The divisor is at least 2, so that the guard is not a trivially satisfied by every invocation.
+ * Argument [r] should be computed from `threadToRun % N`, so the guard holds at that thread.
  */
 private class NegatedModulus(
     private val n: Int,
@@ -84,11 +92,21 @@ private class ModuloVersusMask(
 }
 
 /**
- * `((t >> Bu) & 1u) == 1u` / `(t & (1u << Bu)) != 0u`.
+ * `((t >> Bu) & 1u) == Eu` / `(t & (1u << Bu)) != 0u` when E is 1, `== 0u` when E is 0.
  * Both test bit B of t. Shift amounts are below 32, so both shifts are fully defined.
+ *
+ *   For bit B:
+ *    PerturbGuard: ((t >> B) & 1u) == E
+ *    - shifts bit B down to position 0, masks all other bits, then compares it with E.
+ *    RestoreGuard:
+ *    - if E == 1: (t & (1u << B)) != 0u
+ *    - if E == 0: (t & (1u << B)) == 0u
+ *    - constructs a mask with only bit B set, then tests whether that bit is set or clear.
+ * They mean the same thing because (t >> B) & 1 extracts bit B, while t & (1 << B) isolates bit B in its original position.
  */
 private class BitTest(
     private val bit: Int,
+    private val expected: Int,
 ) : DivergentConditionTemplate {
     override fun perturbGuard(context: EntryPointContext): Expression =
         binary(
@@ -96,23 +114,24 @@ private class BitTest(
             Expression.Paren(
                 binary(BinaryOperator.BINARY_AND, Expression.Paren(binary(BinaryOperator.SHIFT_RIGHT, lidX(context), u(bit))), u(1)),
             ),
-            u(1),
+            u(expected),
         )
 
     override fun restoreGuard(context: EntryPointContext): Expression =
         binary(
-            BinaryOperator.NOT_EQUAL,
+            if (expected == 1) BinaryOperator.NOT_EQUAL else BinaryOperator.EQUAL_EQUAL,
             Expression.Paren(
                 binary(BinaryOperator.BINARY_AND, lidX(context), Expression.Paren(binary(BinaryOperator.SHIFT_LEFT, u(1), u(bit)))),
             ),
             u(0),
         )
 
-    override val commentary: String = "bit $bit of lid.x set"
+    override val commentary: String = "bit $bit of lid.x ${if (expected == 1) "set" else "clear"}"
 }
 
 /**
  * `t < Ku` / `!(Ku <= t)`.
+ * K is drawn above the thread the gate admits, so the guard holds there.
  */
 private class Threshold(
     private val k: Int,
@@ -141,13 +160,18 @@ private object SelectorEquality : DivergentConditionTemplate {
     override val commentary: String = "lid.x == thread selector"
 }
 
+internal const val ZERO_DIVISOR_POOL_MAX = 8
 /**
  * Every divisor of [value] that is greater than 1, ascending.
  *
- * 1 is excluded deliberately: `x % 1u == 0u` holds for every invocation, so a compiler folds it to
- * `true` and the guard stops guarding anything.
+ * 1 is excluded deliberately: `x % 1u == 0u` holds for every invocation; trivial and expected to fold by compiler.
+ *
+ * 0 is divisible by every integer above 1, so it yields the truncated pool [ZERO_DIVISOR_POOL_MAX]
+ * bounds rather than the empty list. v3 pins the admitted thread to 0, and without this case
+ * [DivisorPair] -- the highest-weighted template -- would be unavailable there.
  */
 internal fun divisorsAboveOne(value: Int): List<Int> {
+    if (value == 0) return (2..ZERO_DIVISOR_POOL_MAX).toList()
     if (value < 2) return emptyList()
     val divisors = sortedSetOf<Int>()
     var d = 2
@@ -164,8 +188,8 @@ internal fun divisorsAboveOne(value: Int): List<Int> {
 }
 
 /**
- * Two DISTINCT divisors of [value], both greater than 1, or null when [value] has fewer than two
- * such divisors.
+ * Two DISTINCT divisors of [value], both greater than 1, or null when [value] has fewer than two such divisors.
+ * For [value] 0 they are drawn from the truncated pool [divisorsAboveOne] returns.
  */
 internal fun twoDistinctDivisors(
     value: Int,
@@ -200,33 +224,43 @@ private class DivisorPair(
 
 /**
  * Picks a condition template. Never null: [NegatedModulus] applies unconditionally.
+ *
+ * Only the template of a guard is drawn freely. Whatever each template compares against is derived from
+ * [FuzzerSettings.threadToRun], so the resulting guards hold at that thread -- contract clause 5 on
+ * [DivergentConditionTemplate].
  */
 internal fun chooseConditionTemplate(
     fuzzerSettings: FuzzerSettings,
     context: EntryPointContext,
 ): DivergentConditionTemplate {
     val weights = fuzzerSettings.divergentConditionWeights
+    val thread = fuzzerSettings.threadToRun()
     val choices: List<Pair<Int, () -> DivergentConditionTemplate>> =
         listOfNotNull(
             weights.negatedModulus to
                 {
                     val n = fuzzerSettings.randomInt(2, 9)
-                    NegatedModulus(n, fuzzerSettings.randomInt(0, n)) // [0, n) is the valid range of remainders
+                    NegatedModulus(n, thread % n) // the one remainder in [0, n) that `thread` has
                 },
             weights.moduloVersusMask to
                 {
                     val n = 1 shl fuzzerSettings.randomInt(1, 5) // 2, 4, 8 or 16. n = power of 2
-                    ModuloVersusMask(n, fuzzerSettings.randomInt(0, n))
+                    ModuloVersusMask(n, thread % n)
                 },
-            weights.bitTest to { BitTest(fuzzerSettings.randomInt(0, 8)) },
-            weights.threshold to { Threshold(fuzzerSettings.randomInt(1, 65)) },
+            weights.bitTest to
+                {
+                    val bit = fuzzerSettings.randomInt(0, 8)
+                    BitTest(bit, (thread shr bit) and 1) // test the bit as `thread` has it, set or clear
+                },
+            // Above `thread`, so `thread < K`
+            weights.threshold to { Threshold(fuzzerSettings.randomInt(thread + 1, thread + 65)) },
             // v0 injects no input buffer, so it has no runtime-opaque selector to compare against.
             if (context.opaque() != null) weights.selectorEquality to { SelectorEquality } else null,
-            if (context.opaque() != null && divisorsAboveOne(fuzzerSettings.threadToRun()).size >= 2) {
+            if (context.opaque() != null && divisorsAboveOne(thread).size >= 2) {
                 weights.divisorPair to
                     {
                         val (perturbDivisor, restoreDivisor) =
-                            twoDistinctDivisors(fuzzerSettings.threadToRun(), fuzzerSettings)!!
+                            twoDistinctDivisors(thread, fuzzerSettings)!!
                         DivisorPair(perturbDivisor, restoreDivisor)
                     }
             } else {
