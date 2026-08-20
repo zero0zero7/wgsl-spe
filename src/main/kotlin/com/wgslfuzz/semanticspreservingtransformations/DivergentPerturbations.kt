@@ -166,7 +166,7 @@ private class HiddenConstant(
 /**
  * Picks a `RestorablePerturbation` applicable to [type], or null when nothing applies -- the caller
  * must then skip the injection site, or fall back to a template that needs no inverse.
- * Note:f32 IS supported via Negate; only f16 comes back null.
+ * Note:f32 and f16 note suppported by NEGATE, comes back null.
  *
  * Unlike every other `choose` call site in this package, the candidate list here can legitimately
  * be empty, so `choose` must not be called blindly.

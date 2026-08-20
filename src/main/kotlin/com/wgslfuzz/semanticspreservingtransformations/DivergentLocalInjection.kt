@@ -250,12 +250,11 @@ internal fun applyV2(
 ): ShaderJob? = applyLocalInjection(shaderJob, fuzzerSettings, gateToSingleThread = true)
 
 // v3: v2 without the single-thread gate.
-// The gate is itself divergent control flow -- every invocation but the selected one takes an early
-// return -- which is exactly what v3 removes, leaving the perturb/restore guards as the only control
-// flow the transformation contributes. Sound because the workgroup size is left at the shader's own
-// 1 (a single invocation, lid.x == 0), which the tooling is responsible for: see
-// ApplyDivergentInjections' handling of --divergenceVersion 3, where --workgroupSize is ignored
-// rather than applied. The thread selector must be 0 to match that invocation, otherwise every
+// The early-return single-thread gate is itself divergent control flow 
+// v3 removes this, leaving the perturb/restore guards as the only control flow the transformation contributes.
+// Sound because the workgroup size is left at the wgslsmith-generated shader's original '1' (a single invocation, lid.x == 0),
+// ApplyDivergentInjections handling of --divergenceVersion 3, where --workgroupSize is ignored
+// The thread selector must be 0 to match that invocation, otherwise every
 // selector-based guard is false and the injections are dead code.
 internal fun applyV3(
     shaderJob: ShaderJob,

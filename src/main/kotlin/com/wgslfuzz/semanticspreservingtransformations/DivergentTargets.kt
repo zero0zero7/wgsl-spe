@@ -444,9 +444,9 @@ internal fun isBareJump(statement: Statement): Boolean =
  * Deliberately conservative: a nested scope that shadows [name] with its own declaration still
  * counts, and so does a use inside a branch that never executes.
  *
- * Known gap: the match is on the identifier itself. A pointer to the target (`&x`) stored in a
- * local and dereferenced later is not recognised at the deref site -- though the address-of site
- * is, since it names the target.
+ * Known gap: the match is on the identifier itself. 
+ * - A pointer to the target (`&x`) stored in a local and dereferenced later is not recognised at the deref site.
+ * - [node] could be a nested scope that declares a new variable with the same name. Becomes an issue when the pertubation-restoration operation is type-specific, and the nested scope's variable has a different type. However, unlikely to happen with wgslsmith-generated shaders where the variable names are unique.
  */
 internal fun mentionsIdentifier(
     node: AstNode,

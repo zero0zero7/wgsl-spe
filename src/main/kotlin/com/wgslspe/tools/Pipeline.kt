@@ -33,7 +33,6 @@ Usage: Pipeline [options]
 Options:
   --shader <path>           Path to the input .wgsl shader file (required)
   --limit <n>               Maximum number of skeletons to enumerate (default: all)
-  --max-replacements <n>    Maximum simultaneous replacements per skeleton (default: unlimited)
   --output-dir <dir>        Directory to write skeleton .wgsl files (default: out)
   -h, --help                Show this help message
 
@@ -44,6 +43,8 @@ Description:
 
   Uniforms are loaded from <shader-basename>.uniforms.json if present.
     """.trimIndent())
+    // Removed max-replacement option, dont think it value-adds to evaluation.
+    // --max-replacements <n>    Maximum simultaneous replacements per skeleton (default: unlimited)
 }
 
 fun main(args: Array<String>) {

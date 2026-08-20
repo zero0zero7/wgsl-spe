@@ -85,12 +85,12 @@ fun main(args: Array<String>) {
                 "(each skeleton applies one variable combination and one function combination together) (default: variables)",
         ).default("variables")
 
-    val maxReplacements by parser
-        .option(
-            ArgType.Int,
-            fullName = "max-replacements",
-            description = "Maximum number of simultaneous replacements per skeleton (default: 1)",
-        ).default(Int.MAX_VALUE)
+    // val maxReplacements by parser
+    //     .option(
+    //         ArgType.Int,
+    //         fullName = "max-replacements",
+    //         description = "Maximum number of simultaneous replacements per skeleton (default: 1)",
+    //     ).default(Int.MAX_VALUE)
 
     val random by parser
         .option(

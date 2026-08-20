@@ -1,6 +1,9 @@
 package com.wgslspe.core
 
-private val WORKGROUP_SIZE_SINGLE_ARG = Regex("""@workgroup_size\(\s*(\d+)(u)?\s*\)""")
+// `@workgroupSize(N)`, preceded by `@compute`, followed by `fn main`.
+private val WORKGROUP_SIZE_SINGLE_ARG = Regex(
+    """@compute\s+@workgroup_size\(\s*(\d+)(u)?\s*\)\s+fn\s+main\s*\("""
+)
 
 /**
  * Rewrites the argument of a shader's @workgroup_size(N) / @workgroup_size(Nu) attribute via plain text substitution 

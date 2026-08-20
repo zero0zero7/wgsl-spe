@@ -116,7 +116,7 @@ private fun selectInjectionPoints(
     traverse({ n, acc -> selectInjectionPoints(fuzzerSettings, n, acc) }, node, injections)
     if (node is Statement.Compound) {
         val range = 0..node.statements.size
-        val filtered = range.filter { fuzzerSettings.randomInt(100) < 30 } // 30% chance to select each index
+        val filtered = range.filter { fuzzerSettings.randomInt(100) < 40 } // 40% chance to select each index
         // Fall back to a single random index if all were filtered out, so at least one injection occurs in each compound.
         injections[node] = filtered.ifEmpty { listOf(fuzzerSettings.randomElement(range.toList())) }.toSet()
     }

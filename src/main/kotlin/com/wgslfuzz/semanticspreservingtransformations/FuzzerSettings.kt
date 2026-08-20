@@ -105,11 +105,11 @@ interface FuzzerSettings {
         get() = DivergentConditionWeights()
 
     data class DivergentPerturbationWeights(
-        val restorable: Int = 40,
-        val nonRestorable: Int = 60,
+        val restorable: Int = 30,
+        val nonRestorable: Int = 70,
         // --- restorable transformations: used by algebraic and temp-copy ---
         val addSub: Int = 1,
-        val negate: Int = 1, // i32/f32 always; u32 only when the hidden zero is available ie. v1/v2 not v0.
+        val negate: Int = 1, // i32 always; u32 only when the hidden zero is available ie. v1/v2 not v0.
         // --- templates ---
         val algebraic: Int = 2, // takes on addSub or negate
         val tempCopy: Int = 1, // perturnation to target must be restorable, done via an intermediary temp variable
