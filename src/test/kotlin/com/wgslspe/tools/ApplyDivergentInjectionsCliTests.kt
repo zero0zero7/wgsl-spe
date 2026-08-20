@@ -37,7 +37,32 @@ class ApplyDivergentInjectionsCliTests {
         assertFalse(output.toFile().exists(), "invalid configuration must not create $output")
     }
 
-    private fun runTool(version: Int, thread: Int, workgroupSize: Int?, output: Path): ToolResult {
+    @Test
+    fun `v3 rejects a shader whose workgroup contains multiple invocations`() {
+        val shader = tempDir.resolve("workgroup-two.wgsl")
+        shader.writeText(
+            """
+            @compute @workgroup_size(2)
+            fn main() {
+                var target = 1i;
+            }
+            """.trimIndent(),
+        )
+        val output = tempDir.resolve("invalid-v3.wgsl")
+        val result = runTool(version = 3, thread = 0, workgroupSize = null, output = output, shader = shader)
+
+        assertEquals(2, result.exitCode, result.output)
+        assertContains(result.output, "v3-requires-single-invocation-workgroup")
+        assertFalse(output.toFile().exists(), "invalid v3 shader must not create $output")
+    }
+
+    private fun runTool(
+        version: Int,
+        thread: Int,
+        workgroupSize: Int?,
+        output: Path,
+        shader: Path = Path.of("samples/divergence_with_lid.wgsl").toAbsolutePath(),
+    ): ToolResult {
         val inputs = tempDir.resolve("inputs.json")
         inputs.writeText("{}")
 
@@ -47,7 +72,7 @@ class ApplyDivergentInjectionsCliTests {
             System.getProperty("java.class.path"),
             "com.wgslspe.tools.ApplyDivergentInjectionsKt",
             "--shader",
-            Path.of("samples/divergence_with_lid.wgsl").toAbsolutePath().toString(),
+            shader.toString(),
             "--output",
             output.toString(),
             "--injectDivergence",

@@ -41,7 +41,7 @@ private fun combinedCombinations(
     println("Total combined variable x function combinations (capped at Int.MAX_VALUE): $maxDistinct")
 
     return if (random) {
-        generateSequence { Pair(getRandomCombination(varChoices), randomCallCombination(funcChoices)) }
+        generateSequence { Pair(randomVarCombination(varChoices), randomCallCombination(funcChoices)) }
             .distinctBy { (v, f) -> v.second + f.map { it.second } }
             .take(minOf(n, maxDistinct))
     } else {
@@ -65,7 +65,8 @@ fun getCombinedSkeletons(
     combinedCombinations(tu, env, n, random).map { (v, f) ->
         val (varCombination, varVect) = v
         Pair(
-            applyCalleeReplacements(tu, f.toMap(), leafReplacements = varCombination.toMap()),
+            // Function call replacements
+            applyCalleeReplacements(tu, f.toMap(), leafReplacements = varCombination.toMap()), 
             varVect + f.map { it.second },
         )
     }

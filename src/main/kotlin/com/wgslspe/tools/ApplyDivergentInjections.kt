@@ -66,6 +66,30 @@ internal fun divergenceThreadValidationError(
     }
 }
 
+private fun isLiteralOne(expression: Expression?): Boolean {
+    val literal = expression as? Expression.IntLiteral ?: return false
+    return literal.text.trimEnd('i', 'u', 'I', 'U').trim() == "1"
+}
+
+internal fun v3WorkgroupValidationError(shaderJob: ShaderJob): String? {
+    val invalidEntryPoint =
+        shaderJob.tu.globalDecls
+            .filterIsInstance<GlobalDecl.Function>()
+            .filter { function -> function.attributes.any { it is Attribute.Compute } }
+            .firstOrNull { function ->
+                val size = function.attributes.filterIsInstance<Attribute.WorkgroupSize>().singleOrNull()
+                size == null ||
+                    !isLiteralOne(size.sizeX) ||
+                    (size.sizeY != null && !isLiteralOne(size.sizeY)) ||
+                    (size.sizeZ != null && !isLiteralOne(size.sizeZ))
+            }
+
+    return invalidEntryPoint?.let {
+        "v3-requires-single-invocation-workgroup: @compute entry point '${it.name}' must use " +
+            "@workgroup_size(1) (or equivalent dimensions all equal to 1)"
+    }
+}
+
 // Applies addDivergentInjections (DivergentInjections.kt) to a supplied shader, bypassing initMetamorphicTransformations' random pick over the full transformation list.
 //
 // --workgroupSize is REQUIRED whenever --injectDivergence is set, EXCEPT under --divergenceVersion 3:
@@ -209,6 +233,12 @@ fun main(args: Array<String>) {
         }
 
     val shaderJob = parseWithHardDeadline(shaderText, uniformBuffers, parseTimeout)
+    if (divergenceVersion == 3) {
+        v3WorkgroupValidationError(shaderJob)?.let {
+            System.err.println(it)
+            exitProcess(2)
+        }
+    }
     val fuzzerSettings: FuzzerSettings =
         ThreadToRunSettings(DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom()), threadToRun)
     // Exit with a distinct status when v2/v3 fail to find a suitable local variable to hijack.

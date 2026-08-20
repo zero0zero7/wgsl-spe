@@ -315,19 +315,12 @@ fun getVariableSkeletonEdits(
     val maxDistinct = choices.fold(1L) { acc, c -> minOf(acc * c.size, Int.MAX_VALUE.toLong()) }.toInt()
     val combinations =
         if (random) {
-            generateSequence { getRandomCombination(choices) }
+            generateSequence { randomVarCombination(choices) }
                 .distinctBy { it.second }
                 .take(minOf(n, maxDistinct))      // <- can't ask for more than exist
         } else {
             enumerateCombinations(choices).take(n)
         }
-
-    // val combinations =
-    //     if (random) {
-    //         generateSequence { getRandomCombination(choices) }.distinctBy { it.second }.take(n)
-    //     } else {
-    //         enumerateCombinations(choices).take(n)
-    //     }
 
     // combination[i].first is the original usage node for usage i; charVect[i] is
     // its chosen replacement name — both indexed in the same usage order.
@@ -366,7 +359,7 @@ fun nRandomSkeletons(
     // shader admits fewer than n distinct skeletons, distinctBy().take(n) can never
     // reach n and spins on the infinite generateSequence forever.
     val maxDistinct = choices.fold(1L) { acc, c -> minOf(acc * c.size, Int.MAX_VALUE.toLong()) }.toInt()
-    return generateSequence { getRandomCombination(choices) }
+    return generateSequence { randomVarCombination(choices) }
     .distinctBy { it.second } // prevents duplicates if n is large
     .take(minOf(n, maxDistinct))
     .map { (combination, charVect) ->
@@ -415,7 +408,7 @@ internal fun enumerateCombinations(
 /**
  * Yields one random replacement per usage across all combinations.
  */
-internal fun getRandomCombination(
+internal fun randomVarCombination(
     choices: List<List<Pair<AstNode, AstNode>>>,
 ): Pair<List<Pair<AstNode, AstNode>>, List<String>> {
     val combination = mutableListOf<Pair<AstNode, AstNode>>()

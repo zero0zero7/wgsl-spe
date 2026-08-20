@@ -284,6 +284,7 @@ internal fun applyCalleeReplacements(
     leafReplacements: Map<AstNode, AstNode> = emptyMap(),
 ): TranslationUnit {
     fun replace(node: AstNode): AstNode? {
+        // Replace leaf variable usages first, so that a replaced variable usage nested inside a to-be-replaced call persists. (else, once call is replaced, the new node will not be found in leafReplacements and variable replacement will be dropped)
         leafReplacements[node]?.let { return it }
         val newName = newCallees[node] ?: return null
         // The parsed SourceSpan covers the *original* callee token; it no longer describes the renamed node, so drop it.

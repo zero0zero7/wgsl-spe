@@ -34,7 +34,7 @@ private fun binary(
  * One template yielding TWO spellings of a single predicate.
  *
  * Contract:
- *  1. Both guards evaluate identically for every invocation -- by construction, from parameters
+ *  1. Both guards evaluate identically for the selected to-be-run invocations -- by construction, from parameters
  *     drawn once when the instance is created, not by a caller happening to pass matching arguments.
  *  2. The two spellings are NOT textually identical, so a compiler cannot cancel the pair by
  *     syntactic matching.

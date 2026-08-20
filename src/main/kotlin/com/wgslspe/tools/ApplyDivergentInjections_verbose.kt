@@ -185,6 +185,13 @@ fun main(args: Array<String>) {
     val shaderJob = parseWithHardDeadline(shaderText, uniformBuffers, parseTimeout)
     val tParseEnd = System.nanoTime()
 
+    if (divergenceVersion == 3) {
+        v3WorkgroupValidationError(shaderJob)?.let {
+            System.err.println(it)
+            exitProcess(2)
+        }
+    }
+
     val fuzzerSettings: FuzzerSettings =
         ThreadToRunSettingsVerbose(DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom()), threadToRun)
     // Same distinct exit status as the production tool, with the phases measured so far still reported.

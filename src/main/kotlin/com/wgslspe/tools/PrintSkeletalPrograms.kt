@@ -150,12 +150,8 @@ fun main(args: Array<String>) {
     println("// Input: $shaderPath")
     println("// Found ${decls.size} declarations and ${usages.size} usages(s)\n")
 
-    if (mode == "variables" && usages.isEmpty()) {
-        println("No usages found")
-        return
-    }
-
     val maxSkeletons = limit ?: Int.MAX_VALUE
+    var emittedSkeletons = 0
 
     if (preserveFormat) {
         // Format-preserving mode: splice replacements into the original text.
@@ -169,6 +165,7 @@ fun main(args: Array<String>) {
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
             spliceSkeleton(shaderText, editList, File(outDir, fileName))
+            emittedSkeletons++
         }
     } else {
         // Default mode: re-serialize each skeleton via AstWriter.
@@ -182,6 +179,12 @@ fun main(args: Array<String>) {
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
             emitSkeleton(skeleton, File(outDir, fileName))
+            emittedSkeletons++
         }
+    }
+
+    if (emittedSkeletons == 0) {
+        System.err.println("no-skeletal-candidate: no skeletal variants were emitted")
+        exitProcess(3)
     }
 }

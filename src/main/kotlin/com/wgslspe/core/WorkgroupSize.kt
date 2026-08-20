@@ -1,8 +1,8 @@
 package com.wgslspe.core
 
-// `@workgroupSize(N)`, preceded by `@compute`, followed by `fn main`.
+// `@workgroupSize(N)` or  (N,N) or (N,N,N), preceded by `@compute`, followed by `fn main`.
 private val WORKGROUP_SIZE_SINGLE_ARG = Regex(
-    """@compute\s+@workgroup_size\(\s*(\d+)(u)?\s*\)\s+fn\s+main\s*\("""
+    """@compute\s+@workgroup_size\(\s*(\d+)(u)?(?:\s*,\s*(\d+)(u)?(?:\s*,\s*(\d+)(u)?)?)?\s*\)\s+fn\s+main\s*\("""
 )
 
 /**
