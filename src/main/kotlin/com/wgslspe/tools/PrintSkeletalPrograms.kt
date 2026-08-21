@@ -18,12 +18,39 @@ import kotlinx.cli.ArgParser
 import kotlinx.cli.ArgType
 import kotlinx.cli.default
 import kotlinx.cli.required
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.PrintStream
 import kotlin.system.exitProcess
 import java.io.FileOutputStream
 import java.io.ByteArrayOutputStream
+
+@Serializable
+private data class SpeMetric(
+    val stage: String,
+    val mode: String,
+    val elapsedNs: Long,
+    val status: String = "ok",
+    val variantIndex: Int? = null,
+    val outputPath: String? = null,
+)
+
+private class MetricSink(path: String?) {
+    private val file = path?.let(::File)
+
+    init {
+        file?.let {
+            it.parentFile?.mkdirs()
+            it.writeText("")
+        }
+    }
+
+    fun write(metric: SpeMetric) {
+        file?.appendText(Json.encodeToString(metric) + "\n")
+    }
+}
 
 private fun emitSkeleton(skeleton: com.wgslfuzz.core.TranslationUnit, file: File) {
     val buffer = ByteArrayOutputStream()
@@ -61,6 +88,7 @@ private fun spliceSkeleton(originalText: String, edits: List<Pair<AstNode, Strin
 }
 
 fun main(args: Array<String>) {
+    val totalStartedNs = System.nanoTime()
     val parser = ArgParser("wgsl skeletal program enumerator")
 
     val shaderPath by parser
@@ -121,8 +149,24 @@ fun main(args: Array<String>) {
                 "(preserves the input's exact formatting/dialect) instead of re-serializing " +
                 "via AstWriter (default: false)",
         ).default(false)
-    parser.parse(args)
 
+    val metricsFile by parser
+        .option(
+            ArgType.String,
+            fullName = "metrics-file",
+            description = "Optional JSONL file for parse, setup, per-variant, and total timings",
+        )
+    parser.parse(args)
+    val metricSink = MetricSink(metricsFile)
+    var totalWritten = false
+    fun writeTotal() {
+        if (!totalWritten) {
+            metricSink.write(SpeMetric("total", mode, System.nanoTime() - totalStartedNs))
+            totalWritten = true
+        }
+    }
+
+    try {
     val shaderName = File(shaderPath).nameWithoutExtension
     val outDir = File(outputDir, shaderName)
     outDir.mkdirs()
@@ -130,6 +174,8 @@ fun main(args: Array<String>) {
     val shaderFile = File(shaderPath)
     if (!shaderFile.exists()) {
         System.err.println("Shader file $shaderPath does not exist")
+        metricSink.write(SpeMetric("failure", mode, System.nanoTime() - totalStartedNs, status = "failed"))
+        writeTotal()
         exitProcess(1)
     }
 
@@ -141,10 +187,12 @@ fun main(args: Array<String>) {
             emptyList()
         }
 
+    val parseStartedNs = System.nanoTime()
     val shaderText = shaderFile.readText()
     val shaderJob = parseWithHardDeadline(shaderText, uniformBuffers, parseTimeout)
     val tu = shaderJob.tu
     val env = shaderJob.environment
+    metricSink.write(SpeMetric("parse_resolve", mode, System.nanoTime() - parseStartedNs))
 
     val (decls, usages) = collectSkeletalCandidates(tu, env)
     println("// Input: $shaderPath")
@@ -155,36 +203,69 @@ fun main(args: Array<String>) {
 
     if (preserveFormat) {
         // Format-preserving mode: splice replacements into the original text.
+        val setupStartedNs = System.nanoTime()
         val edits = when (mode) {
             "variables" -> getVariableSkeletonEdits(tu, env, n = maxSkeletons, random = random)
             "functions" -> getFunctionSkeletonEdits(tu, env, n = maxSkeletons, random = random)
             else -> getCombinedSkeletonEdits(tu, env, n = maxSkeletons, random = random)
         }
-        for ((idx, editCharVect) in edits.take(maxSkeletons).withIndex()) {
+        val iterator = edits.take(maxSkeletons).iterator()
+        metricSink.write(SpeMetric("setup", mode, System.nanoTime() - setupStartedNs))
+        var idx = 0
+        while (true) {
+            val materializeStartedNs = System.nanoTime()
+            if (!iterator.hasNext()) break
+            val editCharVect = iterator.next()
+            val materializeNs = System.nanoTime() - materializeStartedNs
             val (editList, charVect) = editCharVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
-            spliceSkeleton(shaderText, editList, File(outDir, fileName))
+            val outputFile = File(outDir, fileName)
+            val emitStartedNs = System.nanoTime()
+            spliceSkeleton(shaderText, editList, outputFile)
+            val emitNs = System.nanoTime() - emitStartedNs
+            metricSink.write(SpeMetric("variant", mode, materializeNs + emitNs, variantIndex = idx, outputPath = outputFile.path))
             emittedSkeletons++
+            idx++
         }
     } else {
         // Default mode: re-serialize each skeleton via AstWriter.
+        val setupStartedNs = System.nanoTime()
         val skeletons = when (mode) {
             "variables" -> getVariableSkeletons(tu, env, n = maxSkeletons, random = random)
             "functions" -> getFunctionSkeletons(tu, env, n = maxSkeletons, random = random)
             else -> getCombinedSkeletons(tu, env, n = maxSkeletons, random = random)
         }
-        for ((idx, skeletonCharVect) in skeletons.take(maxSkeletons).withIndex()) {
+        val iterator = skeletons.take(maxSkeletons).iterator()
+        metricSink.write(SpeMetric("setup", mode, System.nanoTime() - setupStartedNs))
+        var idx = 0
+        while (true) {
+            val materializeStartedNs = System.nanoTime()
+            if (!iterator.hasNext()) break
+            val skeletonCharVect = iterator.next()
+            val materializeNs = System.nanoTime() - materializeStartedNs
             val (skeleton, charVect) = skeletonCharVect
             val fileName = "skeleton_%03d.wgsl".format(idx)
             println("$fileName, $charVect")
-            emitSkeleton(skeleton, File(outDir, fileName))
+            val outputFile = File(outDir, fileName)
+            val emitStartedNs = System.nanoTime()
+            emitSkeleton(skeleton, outputFile)
+            val emitNs = System.nanoTime() - emitStartedNs
+            metricSink.write(SpeMetric("variant", mode, materializeNs + emitNs, variantIndex = idx, outputPath = outputFile.path))
             emittedSkeletons++
+            idx++
         }
     }
 
     if (emittedSkeletons == 0) {
         System.err.println("no-skeletal-candidate: no skeletal variants were emitted")
+        writeTotal()
         exitProcess(3)
+    }
+    } catch (error: Throwable) {
+        metricSink.write(SpeMetric("failure", mode, System.nanoTime() - totalStartedNs, status = "failed"))
+        throw error
+    } finally {
+        writeTotal()
     }
 }
