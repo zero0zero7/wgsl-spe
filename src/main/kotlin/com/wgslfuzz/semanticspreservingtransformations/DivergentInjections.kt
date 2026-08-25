@@ -181,3 +181,10 @@ fun addDivergentInjectionsV3(
     shaderJob: ShaderJob,
     fuzzerSettings: FuzzerSettings,
 ): ShaderJob? = applyV3(shaderJob, fuzzerSettings)
+
+// Returns null when no injection was performed, exactly as V2/V3 do. Unlike them, NOT semantics
+// preserving -- see applyV4 in DivergentLocalInjection.kt.
+fun addDivergentInjectionsV4(
+    shaderJob: ShaderJob,
+    fuzzerSettings: FuzzerSettings,
+): ShaderJob? = applyV4(shaderJob, fuzzerSettings)

@@ -16,6 +16,7 @@ import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV0
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV1
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV2
 import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV3
+import com.wgslfuzz.semanticspreservingtransformations.addDivergentInjectionsV4
 import com.wgslspe.core.parseWithHardDeadline
 import com.wgslspe.core.rewriteWorkgroupSize
 import com.wgslspe.core.stripAstWriterTrailingCommas
@@ -62,6 +63,12 @@ internal fun divergenceThreadValidationError(
             } else {
                 null
             }
+        4 ->
+            if (threadToRun != 0) {
+                "--threadToRun must be 0 with --divergenceVersion 4; got $threadToRun"
+            } else {
+                null
+            }
         else -> null
     }
 }
@@ -71,24 +78,31 @@ private fun isLiteralOne(expression: Expression?): Boolean {
     return literal.text.trimEnd('i', 'u', 'I', 'U').trim() == "1"
 }
 
-internal fun v3WorkgroupValidationError(shaderJob: ShaderJob): String? {
-    val invalidEntryPoint =
-        shaderJob.tu.globalDecls
-            .filterIsInstance<GlobalDecl.Function>()
-            .filter { function -> function.attributes.any { it is Attribute.Compute } }
-            .firstOrNull { function ->
-                val size = function.attributes.filterIsInstance<Attribute.WorkgroupSize>().singleOrNull()
-                size == null ||
-                    !isLiteralOne(size.sizeX) ||
-                    (size.sizeY != null && !isLiteralOne(size.sizeY)) ||
-                    (size.sizeZ != null && !isLiteralOne(size.sizeZ))
-            }
+// Shared by v3 and v4, which both keep the shader's own workgroup size (see the --workgroupSize
+// handling below) and so both need every @compute entry point to be a single-invocation workgroup.
+private fun findInvalidWorkgroupSizeEntryPoint(shaderJob: ShaderJob): GlobalDecl.Function? =
+    shaderJob.tu.globalDecls
+        .filterIsInstance<GlobalDecl.Function>()
+        .filter { function -> function.attributes.any { it is Attribute.Compute } }
+        .firstOrNull { function ->
+            val size = function.attributes.filterIsInstance<Attribute.WorkgroupSize>().singleOrNull()
+            size == null ||
+                !isLiteralOne(size.sizeX) ||
+                (size.sizeY != null && !isLiteralOne(size.sizeY)) ||
+                (size.sizeZ != null && !isLiteralOne(size.sizeZ))
+        }
 
-    return invalidEntryPoint?.let {
+internal fun v3WorkgroupValidationError(shaderJob: ShaderJob): String? =
+    findInvalidWorkgroupSizeEntryPoint(shaderJob)?.let {
         "v3-requires-single-invocation-workgroup: @compute entry point '${it.name}' must use " +
             "@workgroup_size(1) (or equivalent dimensions all equal to 1)"
     }
-}
+
+internal fun v4WorkgroupValidationError(shaderJob: ShaderJob): String? =
+    findInvalidWorkgroupSizeEntryPoint(shaderJob)?.let {
+        "v4-requires-single-invocation-workgroup: @compute entry point '${it.name}' must use " +
+            "@workgroup_size(1) (or equivalent dimensions all equal to 1)"
+    }
 
 // Applies addDivergentInjections (DivergentInjections.kt) to a supplied shader, bypassing initMetamorphicTransformations' random pick over the full transformation list.
 //
@@ -119,7 +133,7 @@ fun main(args: Array<String>) {
             ArgType.Int,
             fullName = "workgroupSize",
             description = "New (x) @workgroup_size to splice in before parsing. Required when --injectDivergence is set, " +
-                "except with --divergenceVersion 3, which keeps the shader's own size and ignores this flag.",
+                "except with --divergenceVersion 3 or 4, which keep the shader's own size and ignore this flag.",
         )
 
     val divergenceVersion by parser
@@ -127,15 +141,17 @@ fun main(args: Array<String>) {
             ArgType.Int,
             fullName = "divergenceVersion",
             shortName = "dv",
-            description = "Which addDivergentInjections variant to apply: 0, 1, 2 or 3 (3 = v2 without the " +
-                "single-thread gate, at the shader's own workgroup size). Required when --injectDivergence is set.",
+            description = "Which addDivergentInjections variant to apply: 0, 1, 2, 3 or 4 (3 = v2 without the " +
+                "single-thread gate, at the shader's own workgroup size; 4 = v3 plus workgroup-uniform-guarded " +
+                "statements that are NOT semantics preserving, so it needs a different oracle -- see " +
+                "_check_divergence_v4). Required when --injectDivergence is set.",
         )
 
     val inputsFilePath by parser
         .option(
             ArgType.String,
             fullName = "inputs",
-            description = "Path to the base inputs.json. Required with --divergenceVersion 1, 2 or 3: those " +
+            description = "Path to the base inputs.json. Required with --divergenceVersion 1, 2, 3 or 4: those " +
                 "transformations add a storage input buffer (the single-thread selector), so its byte " +
                 "value must be appended to the inputs fed to the variant.",
         ).default("inputs.json")
@@ -144,7 +160,7 @@ fun main(args: Array<String>) {
         .option(
             ArgType.String,
             fullName = "inputs-out",
-            description = "Where to write the augmented inputs.json for --divergenceVersion 1, 2 or 3 (base " +
+            description = "Where to write the augmented inputs.json for --divergenceVersion 1, 2, 3 or 4 (base " +
                 "--inputs is left untouched, since the uninstrumented original still runs against it).",
         ).default("inputsWithThread.json")
 
@@ -155,8 +171,8 @@ fun main(args: Array<String>) {
             description = "local_invocation_id.x value the v1/v2 single-thread gate admits, written into " +
                 "the injected input buffer. Also the value DivergentConditions' DivisorPair template " +
                 "derives its divisors from, so it is passed to the transformation as well as to the " +
-                "inputs file -- the two cannot drift apart. v3 has no gate and runs only invocation " +
-                "0, so it wants 0 here: any other value leaves every selector-based guard false.",
+                "inputs file -- the two cannot drift apart. v3/v4 have no gate and run only invocation " +
+                "0, so they want 0 here: any other value leaves every selector-based guard false.",
         ).default(DEFAULT_THREAD_TO_RUN)
 
     val parseTimeout by parser
@@ -168,22 +184,22 @@ fun main(args: Array<String>) {
 
     parser.parse(args)
 
-    if (injectDivergence && divergenceVersion != 3 && workgroupSize == null) {
+    if (injectDivergence && divergenceVersion != 3 && divergenceVersion != 4 && workgroupSize == null) {
         System.err.println(
             "--workgroupSize is required when --injectDivergence is set (local_invocation_id " +
                 "is constant under the corpus's default @workgroup_size(1), so intra-workgroup " +
-                "divergence needs an explicit size > 1). Not so for --divergenceVersion 3, which " +
-                "deliberately keeps the shader's own workgroup size and ignores the flag.",
+                "divergence needs an explicit size > 1). Not so for --divergenceVersion 3 or 4, which " +
+                "deliberately keep the shader's own workgroup size and ignore the flag.",
         )
         exitProcess(1)
     }
 
     if (injectDivergence && divergenceVersion == null) {
-        System.err.println("--divergenceVersion is required when --injectDivergence is set (0, 1, 2 or 3).")
+        System.err.println("--divergenceVersion is required when --injectDivergence is set (0, 1, 2, 3 or 4).")
         exitProcess(1)
     }
-    if (divergenceVersion != null && divergenceVersion !in 0..3) {
-        System.err.println("--divergenceVersion must be 0, 1, 2 or 3, got $divergenceVersion")
+    if (divergenceVersion != null && divergenceVersion !in 0..4) {
+        System.err.println("--divergenceVersion must be 0, 1, 2, 3 or 4, got $divergenceVersion")
         exitProcess(1)
     }
     divergenceThreadValidationError(injectDivergence, divergenceVersion, workgroupSize, threadToRun)?.let {
@@ -210,10 +226,10 @@ fun main(args: Array<String>) {
     }
 
     var shaderText = shaderFile.readText()
-    // v3 runs the shader at its OWN @workgroup_size (1 for wgslsmith output): it adds no gate, so
-    // its single invocation is lid.x == 0 and the injected guards are judged against that.
+    // v3/v4 run the shader at its OWN @workgroup_size (1 for wgslsmith output): they add no gate, so
+    // their single invocation is lid.x == 0 and the injected guards are judged against that.
     // --workgroupSize is ignored there rather than applied.
-    if (workgroupSize != null && divergenceVersion != 3) {
+    if (workgroupSize != null && divergenceVersion != 3 && divergenceVersion != 4) {
         shaderText = rewriteWorkgroupSize(shaderText, workgroupSize!!)
     }
 
@@ -239,6 +255,12 @@ fun main(args: Array<String>) {
             exitProcess(2)
         }
     }
+    if (divergenceVersion == 4) {
+        v4WorkgroupValidationError(shaderJob)?.let {
+            System.err.println(it)
+            exitProcess(2)
+        }
+    }
     val fuzzerSettings: FuzzerSettings =
         ThreadToRunSettings(DefaultFuzzerSettings(Random(seed.toLong()).asJavaRandom()), threadToRun)
     // Exit with a distinct status when v2/v3 fail to find a suitable local variable to hijack.
@@ -255,6 +277,7 @@ fun main(args: Array<String>) {
             0 -> addDivergentInjectionsV0(shaderJob, fuzzerSettings)
             1 -> addDivergentInjectionsV1(shaderJob, fuzzerSettings)
             3 -> addDivergentInjectionsV3(shaderJob, fuzzerSettings) ?: noLocalCandidate()
+            4 -> addDivergentInjectionsV4(shaderJob, fuzzerSettings) ?: noLocalCandidate()
             else -> addDivergentInjectionsV2(shaderJob, fuzzerSettings) ?: noLocalCandidate()
         }
 
