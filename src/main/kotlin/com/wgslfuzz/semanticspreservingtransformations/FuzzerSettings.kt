@@ -247,6 +247,8 @@ interface FuzzerSettings {
 
     fun injectDivergentCounter(): Boolean = randomInt(100) < 50
 
+    fun injectUniformBarrier(): Boolean = randomInt(100) < 50
+
     /**
      * The local_invocation_id.x value that v1/v2's single-thread gate admits.
      *

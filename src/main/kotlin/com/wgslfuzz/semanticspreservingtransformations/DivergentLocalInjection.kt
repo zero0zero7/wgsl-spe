@@ -186,8 +186,16 @@ private fun applyLocalInjection(
         // If template requires an intermediary, inject its declaration at the head of atPerturbIndex,
         // so that it lands in THIS compound, ahead of and outside both guards.
         for (i in 0..compound.statements.size) {
-            if (i == min(index1, index2)) newStatements.addAll(pair.atPerturbIndex)
-            if (i == max(index1, index2)) newStatements.addAll(pair.atRestoreIndex)
+            if (i == min(index1, index2)) {
+                newStatements.addAll(maybeUniformBarrierStatements(context, fuzzerSettings)) // before perturb
+                newStatements.addAll(pair.atPerturbIndex)
+                newStatements.addAll(maybeUniformBarrierStatements(context, fuzzerSettings)) // after perturb
+            }
+            if (i == max(index1, index2)) {
+                newStatements.addAll(maybeUniformBarrierStatements(context, fuzzerSettings)) // before restore
+                newStatements.addAll(pair.atRestoreIndex)
+                newStatements.addAll(maybeUniformBarrierStatements(context, fuzzerSettings)) // after restore
+            }
             if (i < compound.statements.size) {
                 newStatements.add(
                     compound.statements[i].clone { node -> injectInto(node, i) },
@@ -207,11 +215,13 @@ private fun applyLocalInjection(
             // Group the selected targets by their declaring compound.
             val injectionsByCompound = selected.groupBy { target -> target.declCompound }
 
-            val (lidExpr, parameters) = getLidExpr(shaderJob, fuzzerSettings, decl)
+            val (lidExpr, params_tmp) = getLidExpr(shaderJob, fuzzerSettings, decl)
+            val (_, uniformExpr, parameters) = getWorkgroupUniformBuiltinExpr(shaderJob, fuzzerSettings, decl, params_tmp)
             val context =
                 EntryPointContext(
                     lidExpr = lidExpr,
                     parameters = parameters,
+                    uniformBuiltinExpr = uniformExpr,
                     counterName = null, // v2 hijacks an existing var
                     opaqueThreadExpr = { Expression.MemberLookup(Expression.Identifier(inputBuffer.name), V2_STRUCT_MEMBER) },
                     hiddenConstant = { member -> Expression.MemberLookup(Expression.Identifier(inputBuffer.name), member) },

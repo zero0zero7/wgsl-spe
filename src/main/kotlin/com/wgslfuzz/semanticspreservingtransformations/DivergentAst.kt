@@ -123,6 +123,45 @@ internal fun lidParameter(suffix: Int = -1): Pair<ParameterDecl, Expression> {
 }
 
 /**
+ * Synthesizes a fresh entry point parameter carrying @builtin(workgroup_id), plus an expression
+ * reading it. 
+ * Workgroup_id is uniform across every invocation in the workgroup (unlike local_invocation_id)
+ * Only called when [findExistingWorkgroupUniformBuiltin] found none, to avoid introducing a
+ * second occurrence.
+ */
+internal fun workgroupIdParameter(suffix: Int = -1): Pair<ParameterDecl, Expression> {
+    val paramName = if (suffix >= 0) "uniform_workgroup_id_$suffix" else "uniform_workgroup_id"
+    val parameter =
+        ParameterDecl(
+            attributes = listOf(Attribute.Builtin(BuiltinValue.WORKGROUP_ID)),
+            name = paramName,
+            typeDecl = TypeDecl.Vec3(TypeDecl.U32()),
+            metadata = setOf(AddedIdentifier(paramName)),
+        )
+    return parameter to Expression.Identifier(paramName)
+}
+
+/**
+ * Synthesizes a fresh entry point parameter carrying @builtin(num_workgroups), plus an expression
+ * reading it. 
+ * Num_workgroups is uniform across every invocation in the workgroup (in fact across
+ * the whole dispatch).
+ * Only called when [findExistingWorkgroupUniformBuiltin] found none, to avoid introducing a
+ * second occurrence.
+ */
+internal fun numWorkgroupsParameter(suffix: Int = -1): Pair<ParameterDecl, Expression> {
+    val paramName = if (suffix >= 0) "uniform_num_workgroups_$suffix" else "uniform_num_workgroups"
+    val parameter =
+        ParameterDecl(
+            attributes = listOf(Attribute.Builtin(BuiltinValue.NUM_WORKGROUPS)),
+            name = paramName,
+            typeDecl = TypeDecl.Vec3(TypeDecl.U32()),
+            metadata = setOf(AddedIdentifier(paramName)),
+        )
+    return parameter to Expression.Identifier(paramName)
+}
+
+/**
  * `if (<guard>) { <body> }`
  */
 internal fun guardedStatement(

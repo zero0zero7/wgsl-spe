@@ -38,6 +38,12 @@ internal class EntryPointContext(
     private val lidExpr: Expression,
     /** decl.parameters, extended with a synthesised lid ParameterDecl when one is needed. */
     val parameters: List<ParameterDecl>,
+    /**
+     * A workgroup_id or num_workgroups expression, uniform across every invocation in the
+     * workgroup -- unlike [lidExpr]. Populated by v2/v3 to guard a [maybeUniformBarrierStatements]
+     * injection; null wherever no such builtin has been resolved (v0/v1)
+     */
+    private val uniformBuiltinExpr: Expression? = null,
     /** The synthesised i32 counter local. Null for v2, which hijacks an existing var instead. */
     val counterName: String? = null,
     /**
@@ -53,6 +59,10 @@ internal class EntryPointContext(
 ) {
     /** Fresh clone every time; the stored node is never handed out, so no AST node is shared. */
     fun lid(): Expression = lidExpr.clone()
+
+    /** Fresh clone every time; see [lid]. */
+    fun uniformBuiltin(): Expression =
+        requireNotNull(uniformBuiltinExpr) { "this entry point has no workgroup-uniform builtin available" }.clone()
 
     fun counter(): LhsExpression =
         LhsExpression.Identifier(requireNotNull(counterName) { "this entry point has no synthesised counter" })
@@ -126,6 +136,72 @@ internal fun getLidExpr(
     // Create if not exist in original shader
     val (newParameter, expr) = lidParameter(fuzzerSettings.getUniqueId())
     return expr to (functionDecl.parameters + newParameter)
+}
+
+// ---------- locating a workgroup-uniform builtin (workgroup_id / num_workgroups) ----------
+
+/**
+ * Finds an expression that reads workgroup_id or num_workgroups from an EXISTING parameter of
+ * [function] -- whichever is found first, direct or struct-embedded.
+ * Returns null if neither is present yet. 
+ * Mirrors [findExistingLID].
+ */
+internal fun findExistingWorkgroupUniformBuiltin(
+    shaderJob: ShaderJob,
+    function: GlobalDecl.Function,
+): Pair<BuiltinValue, Expression>? {
+    val uniformBuiltins = setOf(BuiltinValue.WORKGROUP_ID, BuiltinValue.NUM_WORKGROUPS)
+    for (parameter in function.parameters) {
+        val found = parameter.attributes.filterIsInstance<Attribute.Builtin>().firstOrNull { it.name in uniformBuiltins }
+        if (found != null) {
+            return found.name to Expression.Identifier(parameter.name)
+        }
+    }
+    // Find workgroup_id / num_workgroups embedded within a struct parameter
+    for (parameter in function.parameters) {
+        val structName = (parameter.typeDecl as? TypeDecl.NamedType)?.name ?: continue
+        val structDecl =
+            shaderJob.tu.globalDecls
+                .filterIsInstance<GlobalDecl.Struct>()
+                .firstOrNull { it.name == structName } ?: continue
+        for (member in structDecl.members) {
+            val found = member.attributes.filterIsInstance<Attribute.Builtin>().firstOrNull { it.name in uniformBuiltins }
+            if (found != null) {
+                return found.name to Expression.MemberLookup(Expression.Identifier(parameter.name), member.name)
+            }
+        }
+    }
+    return null
+}
+
+/**
+ * Finds / synthesizes a workgroup-uniform builtin expression (workgroup_id or num_workgroups,
+ * chosen at random when synthesizing) for [functionDecl], 
+ * returning it alongside [currentParameters] extended with the new parameter when one had to be synthesized.
+ *
+ * [currentParameters] -- rather than `functionDecl.parameters` in [getLidExpr], so this
+ * composes with [getLidExpr]: 
+ * Callers should first call [getLidExpr] to get the possibly-extended parameter list, then pass that list to this function.
+ */
+internal fun getWorkgroupUniformBuiltinExpr(
+    shaderJob: ShaderJob,
+    fuzzerSettings: FuzzerSettings,
+    functionDecl: GlobalDecl.Function,
+    currentParameters: List<ParameterDecl>,
+): Triple<BuiltinValue, Expression, List<ParameterDecl>> {
+    val existing = findExistingWorkgroupUniformBuiltin(shaderJob, functionDecl)
+    if (existing != null) {
+        val (builtin, expr) = existing
+        return Triple(builtin, expr, currentParameters)
+    }
+    // Create if not exist in original shader; pick which uniform builtin to synthesise at random.
+    val suffix = fuzzerSettings.getUniqueId()
+    val (builtin, newParameter, expr) =
+        when (fuzzerSettings.randomElement(listOf(BuiltinValue.WORKGROUP_ID, BuiltinValue.NUM_WORKGROUPS))) {
+            BuiltinValue.WORKGROUP_ID -> workgroupIdParameter(suffix).let { (param, e) -> Triple(BuiltinValue.WORKGROUP_ID, param, e) }
+            else -> numWorkgroupsParameter(suffix).let { (param, e) -> Triple(BuiltinValue.NUM_WORKGROUPS, param, e) }
+        }
+    return Triple(builtin, expr, currentParameters + newParameter)
 }
 
 // ---------- finding a scalar target ----------
