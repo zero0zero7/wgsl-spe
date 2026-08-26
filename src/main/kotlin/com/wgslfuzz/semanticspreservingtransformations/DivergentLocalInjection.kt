@@ -108,6 +108,7 @@ private fun applyLocalInjection(
     val (inputBinding, _) = nextTwoBindings(shaderJob)
     val inputStruct = dataStruct(fuzzerSettings.getUniqueId())
     val inputBuffer = threadToRunInputInstance(inputBinding, inputStruct.name)
+    var barrierInjected: Boolean = false
 
     fun recursiveInjectTargetModifiers(
         context: EntryPointContext,
@@ -192,9 +193,13 @@ private fun applyLocalInjection(
         // four slots around the LID-guarded pair. Empty (never rolled) under v2/v3.
         fun maybeUniform(): List<Statement> =
             if (injectUniformStatements) maybeUniformStatements(context, fuzzerSettings) else emptyList()
-
+        
         for (i in 0..compound.statements.size) {
             if (i == min(index1, index2)) {
+                if (injectUniformStatements && !barrierInjected) {
+                    newStatements.add(guardedUniformBarrierStatement(context, fuzzerSettings))
+                    barrierInjected = true
+                }
                 newStatements.addAll(maybeUniform()) // before perturb
                 newStatements.addAll(pair.atPerturbIndex)
                 newStatements.addAll(maybeUniform()) // after perturb

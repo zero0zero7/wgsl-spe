@@ -8,10 +8,9 @@ import com.wgslfuzz.core.Statement
 // type and therefore cannot be used as an Expression.FunctionCall or assignment value.
 
 /**
- * `if (<uniform guard>) { workgroupBarrier(); }`, with a fresh guard and a fresh id independent of
- * the enclosing perturb/restore pair's id, so the reducer can delete this injection on its own.
+ * `if (<uniform guard>) { workgroupBarrier(); }`
  */
-internal fun guardedUniformStatement(
+internal fun guardedUniformBarrierStatement(
     context: EntryPointContext,
     fuzzerSettings: FuzzerSettings,
 ): Statement.If {
@@ -26,7 +25,24 @@ internal fun guardedUniformStatement(
 }
 
 /**
- * 50% chance of [guardedUniformStatement], else nothing. Called independently at each candidate
+ * `if (<uniform guard>) {  }`
+ */
+internal fun guardedUniformEmptyStatement(
+    context: EntryPointContext,
+    fuzzerSettings: FuzzerSettings,
+): Statement.If {
+    val template = chooseUniformConditionTemplate(fuzzerSettings)
+    val id = fuzzerSettings.getUniqueId()
+    return guardedStatement(
+        guard = template.guard(context.uniformBuiltin()),
+        body = emptyList(),
+        id = id,
+        commentary = template.commentary,
+    )
+}
+
+/**
+ * 50% chance of [guardedUniformEmptyStatement], else nothing. Called independently at each candidate
  * slot around a perturb/restore pair, so a single pair may receive zero to four barrier injections.
  */
 internal fun maybeUniformStatements(
@@ -34,7 +50,7 @@ internal fun maybeUniformStatements(
     fuzzerSettings: FuzzerSettings,
 ): List<Statement> =
     if (fuzzerSettings.injectUniformStatement()) {
-        listOf(guardedUniformStatement(context, fuzzerSettings))
+        listOf(guardedUniformEmptyStatement(context, fuzzerSettings))
     } else {
         emptyList()
     }
