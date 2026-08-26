@@ -248,7 +248,7 @@ interface FuzzerSettings {
     fun injectDivergentCounter(): Boolean = randomInt(100) < 50
 
     // v4 only: 50% chance, independently rolled at each of the four candidate slots around a
-    // perturb/restore pair, of injecting a workgroup-uniform-guarded, non-restorable statement.
+    // perturb/restore pair, of injecting a workgroup-uniform-guarded barrier.
     // See maybeUniformStatements in UniformInjection.kt.
     fun injectUniformStatement(): Boolean = randomInt(100) < 50
 

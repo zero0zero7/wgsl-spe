@@ -97,10 +97,7 @@ private fun chooseInjectionSegment(
  *   one, so its run is deterministic whatever the workgroup size.
  * - v3 leaves it ungated, relying on the workgroup size staying at the shader's own 1 for the same
  *   determinism (see [applyV3]).
- * - v4 is v3 PLUS [maybeUniformStatements] injections (see [applyV4]) -- unlike the LID-guarded
- *   perturb/restore pair above, those are NOT semantics preserving (no restore), so v4 needs an
- *   oracle that does not require matching the original's output; see _check_divergence_v4 in
- *   fuzz/lib/divergenceCheck.sh.
+ * - v4 is v3 PLUS uniform-guarded workgroup barriers from [maybeUniformStatements] (see [applyV4]).
  */
 private fun applyLocalInjection(
     shaderJob: ShaderJob,
@@ -194,7 +191,7 @@ private fun applyLocalInjection(
         // v4 only: a uniform-guarded, non-restorable statement independently rolled at each of the
         // four slots around the LID-guarded pair. Empty (never rolled) under v2/v3.
         fun maybeUniform(): List<Statement> =
-            if (injectUniformStatements) maybeUniformStatements(context, fuzzerSettings, target) else emptyList()
+            if (injectUniformStatements) maybeUniformStatements(context, fuzzerSettings) else emptyList()
 
         for (i in 0..compound.statements.size) {
             if (i == min(index1, index2)) {
@@ -289,19 +286,9 @@ internal fun applyV3(
     fuzzerSettings: FuzzerSettings,
 ): ShaderJob? = applyLocalInjection(shaderJob, fuzzerSettings, gateToSingleThread = false)
 
-// v4: v3 plus uniform-guarded, non-restorable statements (see UniformConditions.kt /
+// v4: v3 plus uniform-guarded workgroup barriers (see UniformConditions.kt /
 // UniformInjection.kt) at each of the four slots around the LID-guarded pair -- 0 to 4 per pair,
 // each independently rolled.
-//
-// Unlike every other injection in this file, these do NOT preserve the original's output: the
-// guarded statement assigns a workgroup-uniform builtin's value into the target, with no restore.
-// That's still workgroup-safe by construction (the guard is workgroup-uniform, so within one
-// workgroup either every invocation takes it or none do -- no intra-workgroup inconsistency), but
-// the target's final value can differ from what the UNMODIFIED original would have produced. So
-// v4 cannot use v2/v3's original-vs-variant oracle; it needs one that only checks the variant
-// itself runs cleanly (no crash / cross-config disagreement) -- see _check_divergence_v4 in
-// fuzz/lib/divergenceCheck.sh, and ApplyDivergentInjections.kt's --divergenceVersion 4 handling
-// (workgroupSize ignored and threadToRun pinned to 0, exactly as for v3).
 internal fun applyV4(
     shaderJob: ShaderJob,
     fuzzerSettings: FuzzerSettings,
